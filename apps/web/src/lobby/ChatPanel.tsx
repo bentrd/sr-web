@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useApp } from "../state/AppState";
 import { rgbToCss } from "./color";
+import { eventToBinding, FOCUS_CHAT_EVENT } from "../state/bindings";
 
 interface ChatPanelProps {
 	// Compact variant for the in-game overlay; lobby uses the default.
@@ -8,10 +9,11 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ variant = "lobby" }: ChatPanelProps): JSX.Element {
-	const { chat, sendChat } = useApp();
+	const { chat, sendChat, bindings } = useApp();
 	const [draft, setDraft] = useState("");
 	const [collapsed, setCollapsed] = useState(false);
 	const listRef = useRef<HTMLDivElement | null>(null);
+	const inputRef = useRef<HTMLInputElement | null>(null);
 
 	// Stick to the bottom whenever a new message arrives.
 	useEffect(() => {
@@ -19,11 +21,48 @@ export function ChatPanel({ variant = "lobby" }: ChatPanelProps): JSX.Element {
 		if (el) el.scrollTop = el.scrollHeight;
 	}, [chat]);
 
+	// Listen for the user-bound chat key (default Enter). When pressed
+	// while focus is anywhere except the chat input, we steal focus AND
+	// kill the event so the keystroke that opened chat doesn't ALSO get
+	// inserted into the input or seen by WASM as a game key.
+	useEffect(() => {
+		const chatCode = bindings.chat.code;
+		const onKey = (e: KeyboardEvent): void => {
+			if (document.activeElement === inputRef.current) return;
+			const b = eventToBinding(e);
+			if (b === null || b.code !== chatCode) return;
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			// Defer focus by a microtask: lets the current event finish
+			// dispatching before the input becomes the active element.
+			queueMicrotask(() => inputRef.current?.focus());
+			setCollapsed(false);
+		};
+		// React to a programmatic focus request too (future-proofing —
+		// e.g. a "/chat" button or slash-command).
+		const onFocusReq = (): void => {
+			setCollapsed(false);
+			inputRef.current?.focus();
+		};
+		window.addEventListener("keydown", onKey, true);
+		window.addEventListener(FOCUS_CHAT_EVENT, onFocusReq);
+		return () => {
+			window.removeEventListener("keydown", onKey, true);
+			window.removeEventListener(FOCUS_CHAT_EVENT, onFocusReq);
+		};
+	}, [bindings.chat.code]);
+
 	function onSubmit(e: FormEvent): void {
 		e.preventDefault();
-		if (!draft.trim()) return;
+		if (!draft.trim()) {
+			// Empty submit (just hit Enter) closes the chat.
+			inputRef.current?.blur();
+			return;
+		}
 		sendChat(draft);
 		setDraft("");
+		// Closing chat after each message returns key control to the game.
+		inputRef.current?.blur();
 	}
 
 	return (
@@ -69,11 +108,12 @@ export function ChatPanel({ variant = "lobby" }: ChatPanelProps): JSX.Element {
 					</div>
 					<form className="chat-form" onSubmit={onSubmit}>
 						<input
+							ref={inputRef}
 							type="text"
 							className="chat-input"
 							value={draft}
 							onChange={(e) => setDraft(e.target.value)}
-							placeholder="Say something… (Enter)"
+							placeholder={`Say something… (${bindings.chat.label})`}
 							maxLength={240}
 							onKeyDown={(e) => {
 								// Don't let game keys leak when typing in chat.

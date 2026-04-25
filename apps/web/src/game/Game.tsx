@@ -19,7 +19,7 @@ import { useApp } from "../state/AppState";
 import { rgbToCss } from "../lobby/color";
 import { loadSrModule, type SrModule } from "../wasm/loadModule";
 import { base64ToBytes, bytesToBase64, decodeSnapshot, type DecodedSnapshot } from "./snapshotCodec";
-import { ACTIONS } from "../state/bindings";
+import { GAME_ACTIONS } from "../state/bindings";
 
 // 60 Hz network send rate. Sim runs at ~300 Hz inside WASM, render at
 // monitor refresh — the three are deliberately decoupled (see AGENTS.md).
@@ -214,7 +214,7 @@ export function Game(): JSX.Element {
 					identity.name || "Player",
 					identity.color[0], identity.color[1], identity.color[2],
 				);
-				ACTIONS.forEach((action, idx) => abi.setBinding(idx, bindings[action].code));
+				GAME_ACTIONS.forEach((action, idx) => abi.setBinding(idx, bindings[action].code));
 				abi.loadMap(`/maps/${room.mapId}.sr`);
 				setStatus("ready");
 			})
@@ -237,7 +237,7 @@ export function Game(): JSX.Element {
 	useEffect(() => {
 		const abi = abiRef.current;
 		if (status !== "ready" || !abi) return;
-		ACTIONS.forEach((action, idx) => abi.setBinding(idx, bindings[action].code));
+		GAME_ACTIONS.forEach((action, idx) => abi.setBinding(idx, bindings[action].code));
 	}, [bindings, status]);
 
 	// Push the local snapshot at 30 Hz. Idle until the ABI is ready.

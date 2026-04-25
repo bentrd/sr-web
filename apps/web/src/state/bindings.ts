@@ -9,7 +9,9 @@
 // non-US layouts (AZERTY-Q reports event.code="KeyA" but keyCode=81 on
 // macOS Chrome — Emscripten sees 81, so we have to too).
 
-export const ACTIONS = [
+// Game actions are forwarded to WASM via sr_set_binding(idx, glfwKey).
+// Their order MUST match the emu::input enum on the C++ side.
+export const GAME_ACTIONS = [
 	"left",
 	"right",
 	"jump",
@@ -19,6 +21,11 @@ export const ACTIONS = [
 	"item",
 	"swap",
 ] as const;
+
+// UI actions are handled in JS only (never pushed to WASM).
+export const UI_ACTIONS = ["chat"] as const;
+
+export const ACTIONS = [...GAME_ACTIONS, ...UI_ACTIONS] as const;
 export type Action = typeof ACTIONS[number];
 
 export type Binding = { code: number; label: string };
@@ -33,6 +40,7 @@ export const DEFAULT_BINDINGS: Bindings = {
 	boost:   { code: 340, label: "Shift" }, // GLFW_KEY_LEFT_SHIFT
 	item:    { code: 69,  label: "E" },     // GLFW_KEY_E
 	swap:    { code: 70,  label: "F" },     // GLFW_KEY_F
+	chat:    { code: 257, label: "Enter" }, // GLFW_KEY_ENTER (UI-only)
 };
 
 const STORAGE_KEY = "sr-web.bindings";
@@ -179,4 +187,10 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
 	boost: "Boost",
 	item: "Use item",
 	swap: "Swap item",
+	chat: "Open chat",
 };
+
+// Custom DOM event used to ask the active ChatPanel to focus its input
+// when the user presses the chat key while focus is somewhere else (e.g.
+// the game canvas). Kept loose-typed because it carries no payload.
+export const FOCUS_CHAT_EVENT = "sr-focus-chat";
