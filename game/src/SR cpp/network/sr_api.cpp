@@ -154,12 +154,20 @@ extern "C"
 		write_le(out_buf + 28, g_attach.x);
 		write_le(out_buf + 32, g_attach.y);
 		write_le(out_buf + 36, g_length);
-		// Player collision size — used by ghost rendering on remote
-		// clients so the rectangle matches the actual hitbox (sliding
-		// players, custom characters, etc.) instead of a hardcoded default.
-		const auto size = a.size;
-		write_le(out_buf + 40, size.x);
-		write_le(out_buf + 44, size.y);
+		// Player collision rectangle — write the *active* hitbox (standing
+		// or sliding) so remote clients render the ghost in the same shape
+		// the local player draws. The actor's d.size stays a fixed 25x45;
+		// the visible rectangle is on get_collision(), which swaps to the
+		// shorter sliding hitbox while is_sliding is set. Overwriting the
+		// position too keeps the rectangle anchored to the visible top-left
+		// (sliding hitbox starts 20px below the standing top).
+		emu::i_collision_shape* shape = p->get_collision();
+		const auto top_left = shape->get_vertex(0);
+		const auto bot_right = shape->get_vertex(2);
+		write_le(out_buf +  0, top_left.x);
+		write_le(out_buf +  4, top_left.y);
+		write_le(out_buf + 40, bot_right.x - top_left.x);
+		write_le(out_buf + 44, bot_right.y - top_left.y);
 		return k_snapshot_bytes;
 	}
 

@@ -4,11 +4,12 @@
 // 1. Mount canvas, load sr.js, await createSrModule({ canvas })
 // 2. Resolve cwrap'd C ABI handles
 // 3. sr_set_local_identity + sr_load_map (for the room's chosen map)
-// 4. Per-tick (rAF): refresh name overlay positions
-// 5. Per 33ms (setInterval): sr_get_local_snapshot → ws.send snapshot
+// 4. Per-tick (rAF): refresh name overlay positions; interpolate ghost
+//    snapshots and push the lerped state via sr_push_ghost
+// 5. Per 16ms (setInterval): sr_get_local_snapshot → ws.send snapshot
 // 6. WS snapshot arrives → sr_set_ghost_identity (first time per peer) +
-//    sr_push_ghost
-// 7. WS player_left → sr_remove_ghost
+//    push into per-peer interpolation buffer
+// 7. WS player_left → sr_remove_ghost + drop buffer
 // 8. Unmount: stop intervals + rAF, leave the WASM alive (factory caches)
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -17,12 +18,57 @@ import type { ServerMsg } from "@sr-web/protocol";
 import { useApp } from "../state/AppState";
 import { rgbToCss } from "../lobby/color";
 import { loadSrModule, type SrModule } from "../wasm/loadModule";
-import { base64ToBytes, bytesToBase64 } from "./snapshotCodec";
+import { base64ToBytes, bytesToBase64, decodeSnapshot, type DecodedSnapshot } from "./snapshotCodec";
 import { ACTIONS } from "../state/bindings";
 
-// 30 Hz network send rate. Sim runs at ~300 Hz inside WASM, render at
+// 60 Hz network send rate. Sim runs at ~300 Hz inside WASM, render at
 // monitor refresh — the three are deliberately decoupled (see AGENTS.md).
-const SEND_INTERVAL_MS = 33;
+const SEND_INTERVAL_MS = 16;
+
+// Render ghosts INTERP_DELAY_MS in the past so we always have one
+// snapshot ahead to lerp toward. Smaller = lower perceived latency, but
+// any network jitter > delay causes a stutter. With 60Hz sends, ~60ms
+// gives us 3-4 samples of cushion.
+const INTERP_DELAY_MS = 60;
+// Cap how many samples we retain per peer. We only ever need the two
+// bracketing the render time; an extra slot or two protects against
+// out-of-order arrivals.
+const GHOST_BUFFER_MAX = 6;
+
+interface GhostSample {
+	recvTime: number; // performance.now() at WS receipt
+	snap: DecodedSnapshot;
+}
+
+function lerp(a: number, b: number, t: number): number {
+	return a + (b - a) * t;
+}
+
+function lerpSample(s0: DecodedSnapshot, s1: DecodedSnapshot, t: number): DecodedSnapshot {
+	// Continuous fields lerp; discrete fields snap at the midpoint so we
+	// don't draw fractional facing/anim states. Grapple endpoints only
+	// lerp when both samples agree the grapple is active — otherwise we'd
+	// interpolate from (0,0) to a real point and draw a rope from origin.
+	const bothActive = s0.grappleActive && s1.grappleActive;
+	const useS1 = t >= 0.5;
+	return {
+		posX: lerp(s0.posX, s1.posX, t),
+		posY: lerp(s0.posY, s1.posY, t),
+		velX: lerp(s0.velX, s1.velX, t),
+		velY: lerp(s0.velY, s1.velY, t),
+		facing: useS1 ? s1.facing : s0.facing,
+		anim: useS1 ? s1.anim : s0.anim,
+		grappleActive: useS1 ? s1.grappleActive : s0.grappleActive,
+		grappleTaut: useS1 ? s1.grappleTaut : s0.grappleTaut,
+		grappleOriginX: bothActive ? lerp(s0.grappleOriginX, s1.grappleOriginX, t) : (useS1 ? s1.grappleOriginX : s0.grappleOriginX),
+		grappleOriginY: bothActive ? lerp(s0.grappleOriginY, s1.grappleOriginY, t) : (useS1 ? s1.grappleOriginY : s0.grappleOriginY),
+		grappleAttachX: bothActive ? lerp(s0.grappleAttachX, s1.grappleAttachX, t) : (useS1 ? s1.grappleAttachX : s0.grappleAttachX),
+		grappleAttachY: bothActive ? lerp(s0.grappleAttachY, s1.grappleAttachY, t) : (useS1 ? s1.grappleAttachY : s0.grappleAttachY),
+		grappleLength: bothActive ? lerp(s0.grappleLength, s1.grappleLength, t) : (useS1 ? s1.grappleLength : s0.grappleLength),
+		sizeX: useS1 ? s1.sizeX : s0.sizeX,
+		sizeY: useS1 ? s1.sizeY : s0.sizeY,
+	};
+}
 
 interface CAbi {
 	setLocalIdentity: (name: string, r: number, g: number, b: number) => void;
@@ -207,10 +253,12 @@ export function Game(): JSX.Element {
 		return () => clearInterval(handle);
 	}, [status, ws]);
 
-	// Inbound WS handling: snapshots → push_ghost; player_left → remove_ghost.
-	// Identity is set/refreshed from room_state's player list whenever it
-	// changes — push_ghost stays cheap because it doesn't redo identity.
+	// Inbound WS handling: snapshots get buffered for interpolation;
+	// player_left removes both buffer and ghost. Identity is set/refreshed
+	// from room_state's player list whenever it changes — pushGhost stays
+	// cheap because it doesn't redo identity.
 	const knownIdentitiesRef = useRef<Set<string>>(new Set());
+	const ghostBuffersRef = useRef<Map<string, GhostSample[]>>(new Map());
 	useEffect(() => {
 		if (status !== "ready") return;
 
@@ -230,28 +278,78 @@ export function Game(): JSX.Element {
 					}
 					const decoded = base64ToBytes(msg.body);
 					if (decoded.byteLength < SNAPSHOT_BYTES) return;
-					const dv = new DataView(decoded.buffer, decoded.byteOffset, decoded.byteLength);
-					abi.pushGhost(
-						msg.playerId,
-						dv.getFloat32(0, true), dv.getFloat32(4, true),
-						dv.getFloat32(8, true), dv.getFloat32(12, true),
-						dv.getInt8(16), dv.getUint8(17),
-						dv.getUint8(18),
-						dv.getFloat32(20, true), dv.getFloat32(24, true),
-						dv.getFloat32(28, true), dv.getFloat32(32, true),
-						dv.getFloat32(36, true), dv.getUint8(19),
-						dv.getFloat32(40, true), dv.getFloat32(44, true),
-					);
+					const snap = decodeSnapshot(decoded);
+					if (!snap) return;
+					let buf = ghostBuffersRef.current.get(msg.playerId);
+					if (!buf) {
+						buf = [];
+						ghostBuffersRef.current.set(msg.playerId, buf);
+					}
+					buf.push({ recvTime: performance.now(), snap });
+					if (buf.length > GHOST_BUFFER_MAX) buf.splice(0, buf.length - GHOST_BUFFER_MAX);
 					return;
 				}
 				case "player_left":
 					abi.removeGhost(msg.id);
 					knownIdentitiesRef.current.delete(msg.id);
+					ghostBuffersRef.current.delete(msg.id);
 					return;
 			}
 		});
 		return off;
 	}, [status, ws, playerId, peerInfo]);
+
+	// Render-rate ghost interpolation. Runs every animation frame, walks
+	// the per-peer buffer to find the two samples bracketing
+	// (now - INTERP_DELAY_MS), lerps, and pushes the result to WASM. This
+	// decouples ghost render fluidity from the network rate — even at
+	// 30Hz sends a 120Hz monitor sees smooth motion.
+	useEffect(() => {
+		if (status !== "ready") return;
+		let raf = 0;
+		const step = (): void => {
+			const abi = abiRef.current;
+			if (!abi) {
+				raf = requestAnimationFrame(step);
+				return;
+			}
+			const renderTime = performance.now() - INTERP_DELAY_MS;
+			for (const [id, buf] of ghostBuffersRef.current) {
+				if (buf.length === 0) continue;
+				let s: DecodedSnapshot;
+				if (buf.length === 1 || renderTime <= buf[0]!.recvTime) {
+					s = buf[0]!.snap;
+				} else if (renderTime >= buf[buf.length - 1]!.recvTime) {
+					// Buffer underrun — hold latest. Better than extrapolating
+					// into a rubber-banding ghost.
+					s = buf[buf.length - 1]!.snap;
+				} else {
+					// Find the bracketing pair and lerp.
+					let i = 0;
+					while (i < buf.length - 1 && buf[i + 1]!.recvTime <= renderTime) i++;
+					const s0 = buf[i]!;
+					const s1 = buf[i + 1]!;
+					const span = s1.recvTime - s0.recvTime;
+					const t = span > 0 ? (renderTime - s0.recvTime) / span : 0;
+					s = lerpSample(s0.snap, s1.snap, t);
+				}
+				abi.pushGhost(
+					id,
+					s.posX, s.posY,
+					s.velX, s.velY,
+					s.facing, s.anim,
+					s.grappleActive ? 1 : 0,
+					s.grappleOriginX, s.grappleOriginY,
+					s.grappleAttachX, s.grappleAttachY,
+					s.grappleLength, s.grappleTaut ? 1 : 0,
+					s.sizeX, s.sizeY,
+				);
+			}
+			raf = requestAnimationFrame(step);
+		};
+		raf = requestAnimationFrame(step);
+		return () => cancelAnimationFrame(raf);
+	}, [status]);
 
 	// Refresh known peer identities when the room roster changes (e.g. a
 	// late joiner picked a new color). push_ghost doesn't carry identity,
