@@ -18,6 +18,7 @@ import type {
 import { WsClient, type WsStatus } from "../net/ws";
 import { randomColor } from "../lobby/color";
 import { type Bindings, loadBindings, saveBindings } from "./bindings";
+import { type Visuals, loadVisuals, saveVisuals, VISUAL_DEFAULTS } from "./visuals";
 
 const MAX_CHAT_HISTORY = 80;
 
@@ -89,6 +90,9 @@ export type AppState = {
 	setBindings: (b: Bindings) => void;
 	targetFps: number;
 	setTargetFps: (fps: number) => void;
+	visuals: Visuals;
+	setVisuals: (v: Visuals) => void;
+	resetVisuals: () => void;
 	room: RoomState | null;
 	leaveRoom: () => void;
 	chat: readonly ChatMsg[];
@@ -112,6 +116,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 	const [identity, setIdentityState] = useState<Identity>(() => loadIdentity());
 	const [bindings, setBindingsState] = useState<Bindings>(() => loadBindings());
 	const [targetFps, setTargetFpsState] = useState<number>(() => loadTargetFps());
+	const [visuals, setVisualsState] = useState<Visuals>(() => loadVisuals());
 	const [room, setRoom] = useState<RoomState | null>(null);
 	const [chat, setChat] = useState<readonly ChatMsg[]>([]);
 	const [lastError, setLastError] =
@@ -203,6 +208,16 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 		saveTargetFps(clamped);
 	};
 
+	const setVisuals = (v: Visuals): void => {
+		setVisualsState(v);
+		saveVisuals(v);
+	};
+
+	const resetVisuals = (): void => {
+		setVisualsState(VISUAL_DEFAULTS);
+		saveVisuals(VISUAL_DEFAULTS);
+	};
+
 	const leaveRoom = (): void => {
 		ws.send({ type: "leave_room" });
 		setRoom(null);
@@ -235,6 +250,9 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 			setBindings,
 			targetFps,
 			setTargetFps,
+			visuals,
+			setVisuals,
+			resetVisuals,
 			room,
 			leaveRoom,
 			chat,
@@ -246,7 +264,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 			unsubscribePublicRooms,
 		}),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[ws, wsStatus, playerId, identity, bindings, targetFps, room, chat, lastError, publicRooms],
+		[ws, wsStatus, playerId, identity, bindings, targetFps, visuals, room, chat, lastError, publicRooms],
 	);
 
 	return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;

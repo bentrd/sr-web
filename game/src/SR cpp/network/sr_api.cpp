@@ -14,6 +14,7 @@
 #include "sr_api.h"
 #include "../instance.h"
 #include "../playground.h"
+#include "../drawing/visuals_config.h"
 #include "../emulation/player.h"
 #include "../emulation/grapple.h"
 
@@ -233,6 +234,49 @@ extern "C"
 		const emu::level_actor& start = pg.m_level.get_actor("PlayerStart");
 		p->set_position(start.position);
 		p->m_actor->d.velocity = emu::vector{ 0.0f, 0.0f };
+	}
+
+	// Visual palette setters. Colors are 0..1 floats. Read every frame
+	// by instance::draw() / draw_util.cpp so changes feel live with no
+	// extra book-keeping. Defaults match the original hardcoded palette,
+	// so a JS client that never calls these is visually unchanged.
+	void sr_set_visual_bg(float r, float g, float b)
+	{
+		auto& v = draw::visuals();
+		v.bg_r = r; v.bg_g = g; v.bg_b = b;
+	}
+	void sr_set_visual_walls(float r, float g, float b)
+	{
+		auto& v = draw::visuals();
+		v.walls_r = r; v.walls_g = g; v.walls_b = b;
+	}
+	void sr_set_visual_grapple_stripe(float r, float g, float b)
+	{
+		auto& v = draw::visuals();
+		v.grapple_stripe_r = r; v.grapple_stripe_g = g; v.grapple_stripe_b = b;
+	}
+	void sr_set_visual_wallclimb_stripe(float r, float g, float b)
+	{
+		auto& v = draw::visuals();
+		v.wallclimb_stripe_r = r; v.wallclimb_stripe_g = g; v.wallclimb_stripe_b = b;
+	}
+	void sr_set_visual_grapple_cord(float r, float g, float b)
+	{
+		auto& v = draw::visuals();
+		v.grapple_cord_r = r; v.grapple_cord_g = g; v.grapple_cord_b = b;
+	}
+	void sr_set_visual_grapple_head(float r, float g, float b)
+	{
+		auto& v = draw::visuals();
+		v.grapple_head_r = r; v.grapple_head_g = g; v.grapple_head_b = b;
+	}
+	void sr_set_visual_grapple_head_size(float size)
+	{
+		// Clamp to a sane range — silly to allow 0 (invisible) or values
+		// large enough to chew the whole map.
+		if (size < 1.0f) size = 1.0f;
+		if (size > 64.0f) size = 64.0f;
+		draw::visuals().grapple_head_size = size;
 	}
 
 	// Configure the WASM main loop's frame pacing.

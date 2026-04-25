@@ -387,6 +387,51 @@ button.primary {
 	box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
+.modal-wide {
+	width: min(34rem, 100%);
+}
+
+.visual-hint {
+	font-size: 0.75rem;
+	color: var(--muted);
+	font-weight: 400;
+	margin-top: 0.1rem;
+}
+
+.visual-color-cell {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	justify-content: flex-end;
+}
+
+.visual-color {
+	width: 2.5rem;
+	height: 1.75rem;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: 0.4rem;
+	background: var(--panel-2);
+	cursor: pointer;
+}
+
+.visual-color::-webkit-color-swatch-wrapper {
+	padding: 2px;
+}
+
+.visual-color::-webkit-color-swatch {
+	border: none;
+	border-radius: 0.25rem;
+}
+
+.visual-hex {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.8rem;
+	color: var(--muted);
+	min-width: 6ch;
+	text-align: right;
+}
+
 .modal-header {
 	display: flex;
 	align-items: center;

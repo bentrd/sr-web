@@ -92,6 +92,13 @@ interface CAbi {
 	teleportLocal: (x: number, y: number) => void;
 	resetLocal: () => void;
 	setTargetFps: (fps: number) => void;
+	setVisualBg: (r: number, g: number, b: number) => void;
+	setVisualWalls: (r: number, g: number, b: number) => void;
+	setVisualGrappleStripe: (r: number, g: number, b: number) => void;
+	setVisualWallclimbStripe: (r: number, g: number, b: number) => void;
+	setVisualGrappleCord: (r: number, g: number, b: number) => void;
+	setVisualGrappleHead: (r: number, g: number, b: number) => void;
+	setVisualGrappleHeadSize: (size: number) => void;
 }
 
 function bindCAbi(mod: SrModule): CAbi {
@@ -116,6 +123,13 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_teleport = mod.cwrap("sr_teleport_local", null, ["number", "number"]);
 	const f_reset = mod.cwrap("sr_reset_local", null, []);
 	const f_set_fps = mod.cwrap("sr_set_target_fps", null, ["number"]);
+	const f_v_bg = mod.cwrap("sr_set_visual_bg", null, ["number", "number", "number"]);
+	const f_v_walls = mod.cwrap("sr_set_visual_walls", null, ["number", "number", "number"]);
+	const f_v_grapple_stripe = mod.cwrap("sr_set_visual_grapple_stripe", null, ["number", "number", "number"]);
+	const f_v_wallclimb_stripe = mod.cwrap("sr_set_visual_wallclimb_stripe", null, ["number", "number", "number"]);
+	const f_v_grapple_cord = mod.cwrap("sr_set_visual_grapple_cord", null, ["number", "number", "number"]);
+	const f_v_grapple_head = mod.cwrap("sr_set_visual_grapple_head", null, ["number", "number", "number"]);
+	const f_v_grapple_head_size = mod.cwrap("sr_set_visual_grapple_head_size", null, ["number"]);
 
 	// Persistent scratch buffers in WASM heap. Allocated once; freed on
 	// page unload. malloc/free are exported but we never hit them more
@@ -177,6 +191,13 @@ function bindCAbi(mod: SrModule): CAbi {
 		setTargetFps: (fps) => {
 			f_set_fps(fps);
 		},
+		setVisualBg: (r, g, b) => { f_v_bg(r, g, b); },
+		setVisualWalls: (r, g, b) => { f_v_walls(r, g, b); },
+		setVisualGrappleStripe: (r, g, b) => { f_v_grapple_stripe(r, g, b); },
+		setVisualWallclimbStripe: (r, g, b) => { f_v_wallclimb_stripe(r, g, b); },
+		setVisualGrappleCord: (r, g, b) => { f_v_grapple_cord(r, g, b); },
+		setVisualGrappleHead: (r, g, b) => { f_v_grapple_head(r, g, b); },
+		setVisualGrappleHeadSize: (size) => { f_v_grapple_head_size(size); },
 	};
 }
 
@@ -194,7 +215,7 @@ const HOVER_RADIUS_PX = 30;
 const HOVER_RADIUS_SQ = HOVER_RADIUS_PX * HOVER_RADIUS_PX;
 
 export function Game(): JSX.Element {
-	const { ws, identity, bindings, targetFps, room, playerId } = useApp();
+	const { ws, identity, bindings, targetFps, visuals, room, playerId } = useApp();
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const abiRef = useRef<CAbi | null>(null);
@@ -256,12 +277,28 @@ export function Game(): JSX.Element {
 	}, [bindings, status]);
 
 	// Apply the user-chosen render FPS cap to the WASM main loop. Re-runs
-	// whenever the slider in ControlsModal moves.
+	// whenever the slider in OptionsModal moves.
 	useEffect(() => {
 		const abi = abiRef.current;
 		if (status !== "ready" || !abi) return;
 		abi.setTargetFps(targetFps);
 	}, [targetFps, status]);
+
+	// Push the user's visual palette every time it changes (or once after
+	// WASM is ready, with whatever's loaded from localStorage). The C side
+	// keeps a single mutable struct, so each setter is just an in-place
+	// write — cheap enough to spam on every slider change.
+	useEffect(() => {
+		const abi = abiRef.current;
+		if (status !== "ready" || !abi) return;
+		abi.setVisualBg(visuals.bg[0], visuals.bg[1], visuals.bg[2]);
+		abi.setVisualWalls(visuals.walls[0], visuals.walls[1], visuals.walls[2]);
+		abi.setVisualGrappleStripe(visuals.grappleStripe[0], visuals.grappleStripe[1], visuals.grappleStripe[2]);
+		abi.setVisualWallclimbStripe(visuals.wallclimbStripe[0], visuals.wallclimbStripe[1], visuals.wallclimbStripe[2]);
+		abi.setVisualGrappleCord(visuals.grappleCord[0], visuals.grappleCord[1], visuals.grappleCord[2]);
+		abi.setVisualGrappleHead(visuals.grappleHead[0], visuals.grappleHead[1], visuals.grappleHead[2]);
+		abi.setVisualGrappleHeadSize(visuals.grappleHeadSize);
+	}, [visuals, status]);
 
 	// Reset key: snap back to the map's PlayerStart and clear velocity.
 	// Same window-capture pattern as the chat key — runs before WASM's

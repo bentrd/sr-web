@@ -5,6 +5,7 @@ import { Game } from "../game/Game";
 import { hexToRgb, rgbToCss, rgbToHex } from "./color";
 import { MAPS } from "./maps";
 import { ControlsModal } from "./ControlsModal";
+import { OptionsModal } from "./OptionsModal";
 import { ChatPanel } from "./ChatPanel";
 
 const SOFT_CAP_WARNING = 12;
@@ -15,6 +16,7 @@ export function Room(): JSX.Element {
 	const { ws, wsStatus, playerId, identity, setIdentity, room, lastError, leaveRoom } =
 		useApp();
 	const [controlsOpen, setControlsOpen] = useState(false);
+	const [optionsOpen, setOptionsOpen] = useState(false);
 	const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
 	// If we land directly on /r/CODE without an active room state for that
@@ -94,6 +96,9 @@ export function Room(): JSX.Element {
 					<button type="button" onClick={() => setControlsOpen(true)}>
 						Controls
 					</button>
+					<button type="button" onClick={() => setOptionsOpen(true)}>
+						Options
+					</button>
 					<button type="button" onClick={() => { leaveRoom(); navigate("/"); }}>
 						Leave
 					</button>
@@ -101,6 +106,7 @@ export function Room(): JSX.Element {
 				<Game />
 				<ChatPanel variant="game" />
 				<ControlsModal open={controlsOpen} onClose={() => setControlsOpen(false)} />
+				<OptionsModal open={optionsOpen} onClose={() => setOptionsOpen(false)} />
 			</main>
 		);
 	}
@@ -218,11 +224,20 @@ export function Room(): JSX.Element {
 					Controls
 				</button>
 				<span className="status-dot">·</span>
+				<button
+					type="button"
+					className="link-button"
+					onClick={() => setOptionsOpen(true)}
+				>
+					Options
+				</button>
+				<span className="status-dot">·</span>
 				server: {wsStatus.kind}
 				{wsStatus.kind === "closed" && ` — ${wsStatus.reason}`}
 			</footer>
 			<ChatPanel variant="lobby" />
 			<ControlsModal open={controlsOpen} onClose={() => setControlsOpen(false)} />
+			<OptionsModal open={optionsOpen} onClose={() => setOptionsOpen(false)} />
 		</main>
 	);
 }

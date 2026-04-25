@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "draw_util.h"
+#include "visuals_config.h"
 #include "../emulation/tile_layer_base.h"
 
 using namespace draw;
@@ -330,12 +331,14 @@ void draw::draw_line(float r, float g, float b, vector p1, vector p2)
 
 void draw::draw_tile(emu::tile_id tile, vector pos)
 {
-	// Color palette: solid tiles render as a medium gray on the dark
-	// background, with white stripes for "special" surfaces (grappable
-	// ceilings, climbable walls). Keeping the body slightly darker than
-	// the stripes ensures the affordance stays readable.
-	constexpr float body_r = 0.62f, body_g = 0.64f, body_b = 0.68f;
-	constexpr float stripe_r = 1.0f, stripe_g = 1.0f, stripe_b = 1.0f;
+	// Palette is read from the live visuals_config so OptionsModal
+	// edits take effect mid-frame. Defaults match the original
+	// medium-gray body + white stripes, designed to keep the
+	// "this surface is grappable / climbable" affordance readable.
+	const auto& v = draw::visuals();
+	const float body_r = v.walls_r, body_g = v.walls_g, body_b = v.walls_b;
+	const float gstripe_r = v.grapple_stripe_r, gstripe_g = v.grapple_stripe_g, gstripe_b = v.grapple_stripe_b;
+	const float wstripe_r = v.wallclimb_stripe_r, wstripe_g = v.wallclimb_stripe_g, wstripe_b = v.wallclimb_stripe_b;
 
 	switch (tile)
 	{
@@ -352,7 +355,7 @@ void draw::draw_tile(emu::tile_id tile, vector pos)
 			body_r, body_g, body_b,
 			pos, pos + vector{ 16.0f, 16.0f });
 		draw_rectangle(
-			stripe_r, stripe_g, stripe_b,
+			gstripe_r, gstripe_g, gstripe_b,
 			pos + vector{ 0.0f, 13.0f }, pos + vector{ 16.0f, 16.0f });
 		break;
 	case tile_wall_right:
@@ -360,7 +363,7 @@ void draw::draw_tile(emu::tile_id tile, vector pos)
 			body_r, body_g, body_b,
 			pos, pos + vector{ 16.0f, 16.0f });
 		draw_rectangle(
-			stripe_r, stripe_g, stripe_b,
+			wstripe_r, wstripe_g, wstripe_b,
 			pos + vector{ 13.0f, 0.0f }, pos + vector{ 16.0f, 16.0f });
 		break;
 	case tile_wall_left:
@@ -368,7 +371,7 @@ void draw::draw_tile(emu::tile_id tile, vector pos)
 			body_r, body_g, body_b,
 			pos, pos + vector{ 16.0f, 16.0f });
 		draw_rectangle(
-			stripe_r, stripe_g, stripe_b,
+			wstripe_r, wstripe_g, wstripe_b,
 			pos, pos + vector{ 3.0f, 16.0f });
 		break;
 	case tile_slope_floor_left:
@@ -443,6 +446,8 @@ void draw::draw_grapple(grapple* grapple, const camera& camera)
 		const vector hook_p = grapple->get_center() - camera.position;
 		const vector owner_p = grapple->m_owner->m_actor->get_collision()->get_center() - camera.position;
 
+		const auto& v = draw::visuals();
+
 		// Rope as a thin oriented quad rather than GL_LINES so it lives in
 		// the triangle batch — without that, lines render after triangles
 		// in flush_frame() and the rope would end up in front of the
@@ -454,14 +459,20 @@ void draw::draw_grapple(grapple* grapple, const camera& camera)
 		{
 			const float half_w = 1.0f;
 			const vector n{ -dir.y / len * half_w, dir.x / len * half_w };
-			draw_triangle(0.0f, 0.0f, 0.0f, owner_p + n, hook_p + n, hook_p - n);
-			draw_triangle(0.0f, 0.0f, 0.0f, owner_p + n, hook_p - n, owner_p - n);
+			draw_triangle(v.grapple_cord_r, v.grapple_cord_g, v.grapple_cord_b, owner_p + n, hook_p + n, hook_p - n);
+			draw_triangle(v.grapple_cord_r, v.grapple_cord_g, v.grapple_cord_b, owner_p + n, hook_p - n, owner_p - n);
 		}
 
+		// Hook tip is rendered centered on the grapple actor's collision
+		// center so resizing the visual doesn't decouple the affordance
+		// from the actual attachment point.
+		const float hs = v.grapple_head_size;
+		const vector center = grapple->m_actor->d.position + grapple->m_actor->d.size * 0.5f;
+		const vector half{ hs * 0.5f, hs * 0.5f };
 		draw::draw_rectangle(
-			1.0f, 0.0f, 0.0f,
-			grapple->m_actor->d.position - camera.position,
-			grapple->m_actor->d.position + grapple->m_actor->d.size - camera.position);
+			v.grapple_head_r, v.grapple_head_g, v.grapple_head_b,
+			center - half - camera.position,
+			center + half - camera.position);
 	}
 }
 

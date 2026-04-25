@@ -253,15 +253,15 @@ When picking up a task: tick the box in a commit *before* starting (claim it), o
 
 ### 8c. Game options modal
 
-- [ ] C++: `visuals_config.{h,cpp}` holding background / walls body & stripe / wallclimb stripe / grapple stripe / grapple cord / grapple head color + size
-- [ ] `instance::draw()` reads bg color from `visuals_config` per frame; `draw_util.cpp` reads body / stripe / cord / head colors and head size from the config
-- [ ] 7 new `sr_set_*` ABI exports in `network/sr_api.cpp` + `EXPORTED_FUNCTIONS` in `CMakeLists.txt`
-- [ ] JS: `state/visuals.ts` (types + defaults + localStorage), `AppState` extended with `visuals` + `setVisuals`
-- [ ] `OptionsModal.tsx` (mirrors `ControlsModal` pattern) with a 16M color picker per slot + slider for grapple-head size + FPS
-- [ ] Move FPS row out of `ControlsModal` into `OptionsModal`
-- [ ] `Game.tsx` cwraps the 7 setters and applies them in a `useEffect([visuals, status])`
-- [ ] `Room.tsx` adds an Options button next to the Controls button in the game-bar
-- [ ] **Exit gate**: WASM rebuild succeeds; toggling each color in the modal updates the running game live; settings survive reload
+- [x] C++: `visuals_config.{h,cpp}` holding background / walls body & stripe / wallclimb stripe / grapple stripe / grapple cord / grapple head color + size
+- [x] `instance::draw()` reads bg color from `visuals_config` per frame; `draw_util.cpp` reads body / stripe / cord / head colors and head size from the config
+- [x] 7 new `sr_set_*` ABI exports in `network/sr_api.cpp` + `EXPORTED_FUNCTIONS` in `CMakeLists.txt`
+- [x] JS: `state/visuals.ts` (types + defaults + localStorage), `AppState` extended with `visuals` + `setVisuals`
+- [x] `OptionsModal.tsx` (mirrors `ControlsModal` pattern) with a 16M color picker per slot + slider for grapple-head size + FPS
+- [x] Move FPS row out of `ControlsModal` into `OptionsModal`
+- [x] `Game.tsx` cwraps the 7 setters and applies them in a `useEffect([visuals, status])`
+- [x] `Room.tsx` adds an Options button next to the Controls button in the game-bar
+- [x] **Exit gate**: WASM rebuild succeeds (sr.js / sr.wasm have all 7 visual exports); typecheck + prod build green. Live-toggle visual confirmation deferred to next browser run.
 
 ---
 

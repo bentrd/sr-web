@@ -1,0 +1,38 @@
+#pragma once
+
+// Runtime-tunable rendering palette. The web build's OptionsModal pokes
+// these via the sr_set_visual_* C ABI exports; they're consumed by
+// instance::draw() (background) and draw_util.cpp (tile + grapple
+// colors / sizes). Defaults match the original hardcoded palette so a
+// fresh client looks identical to the launch build.
+
+namespace draw
+{
+	struct visuals_config
+	{
+		// Play-area clear color. Read every frame so a slider feels live.
+		float bg_r = 0.16f, bg_g = 0.17f, bg_b = 0.20f;
+
+		// Tile body — the medium gray on solid tiles + the base under the
+		// stripe on grappable / climbable tiles.
+		float walls_r = 0.62f, walls_g = 0.64f, walls_b = 0.68f;
+
+		// Stripe on tile_grapple_ceil ("grapple this surface" affordance).
+		float grapple_stripe_r = 1.0f, grapple_stripe_g = 1.0f, grapple_stripe_b = 1.0f;
+
+		// Stripe on tile_wall_left / tile_wall_right ("wallclimb" affordance).
+		float wallclimb_stripe_r = 1.0f, wallclimb_stripe_g = 1.0f, wallclimb_stripe_b = 1.0f;
+
+		// Grapple rope quad.
+		float grapple_cord_r = 0.0f, grapple_cord_g = 0.0f, grapple_cord_b = 0.0f;
+
+		// Grapple hook tip rectangle. Color + per-axis size in world units
+		// (default 12x12 mirrors the actor's collision box).
+		float grapple_head_r = 1.0f, grapple_head_g = 0.0f, grapple_head_b = 0.0f;
+		float grapple_head_size = 12.0f;
+	};
+
+	// Single mutable instance owned by the renderer. Returned by reference
+	// so call sites can read/write without going through getters.
+	visuals_config& visuals();
+}

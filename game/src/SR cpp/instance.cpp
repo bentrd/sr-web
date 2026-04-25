@@ -5,6 +5,7 @@
 #include "instance.h"
 #include "command/command_functions.h"
 #include "drawing/draw_util.h"
+#include "drawing/visuals_config.h"
 
 instance::instance() :
 	m_input_handler{},
@@ -165,6 +166,10 @@ void instance::draw()
 	if (!m_drawing_enabled)
 		return;
 
+	// Re-apply the clear color every frame so the OptionsModal slider
+	// feels live; the cost is one trivial GL call.
+	const auto& v = draw::visuals();
+	glClearColor(v.bg_r, v.bg_g, v.bg_b, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	m_playground.draw(m_inputs);
@@ -203,10 +208,11 @@ void instance::enable_drawing(bool enable)
 #endif
 		draw::init();
 		draw::set_viewport((int)window_width, (int)window_height);
-		// Dark gray play-area background — matches the lobby UI palette so
-		// the canvas reads as part of the same app, and gives the white
-		// stripes on grapple/wall tiles room to pop.
-		glClearColor(0.16f, 0.17f, 0.20f, 1.0f);
+		// Initial clear color from the visuals config (defaults match the
+		// original dark gray). instance::draw() re-applies it every frame
+		// so live edits take effect immediately.
+		const auto& v0 = draw::visuals();
+		glClearColor(v0.bg_r, v0.bg_g, v0.bg_b, 1.0f);
 
 		m_input_handler.init_callbacks(m_win);
 	}
