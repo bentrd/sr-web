@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useApp } from "../state/AppState";
 import { Game } from "../game/Game";
 import { rgbToCss } from "./color";
 import { MAPS } from "./maps";
+import { ControlsModal } from "./ControlsModal";
+import { ChatPanel } from "./ChatPanel";
 
 const SOFT_CAP_WARNING = 12;
 
@@ -12,24 +14,32 @@ export function Room(): JSX.Element {
 	const navigate = useNavigate();
 	const { ws, wsStatus, playerId, identity, room, lastError, leaveRoom } =
 		useApp();
+	const [controlsOpen, setControlsOpen] = useState(false);
 
 	// If we land directly on /r/CODE without an active room state for that
-	// code (e.g. shared link), auto-join — provided we have an identity.
-	const joinAttemptedRef = useRef(false);
+	// code (e.g. shared link, page refresh, WS reconnect), auto-join.
+	// We re-issue join_room on each fresh "open" so a refresh inside an
+	// already-started room rejoins via our persisted player id.
+	const lastJoinedRef = useRef<{ code: string; openAt: number } | null>(null);
 	useEffect(() => {
 		if (!urlCode) return;
-		if (wsStatus.kind !== "open") return;
-		if (room?.code === urlCode.toUpperCase()) return;
+		if (wsStatus.kind !== "open") {
+			// Reset so the next open re-attempts.
+			lastJoinedRef.current = null;
+			return;
+		}
+		const code = urlCode.toUpperCase();
+		if (room?.code === code) return;
 		if (!identity.name.trim()) {
-			// Need a name first — bounce to home.
 			navigate("/", { replace: true });
 			return;
 		}
-		if (joinAttemptedRef.current) return;
-		joinAttemptedRef.current = true;
+		// Avoid spamming join_room within the same WS session.
+		if (lastJoinedRef.current?.code === code) return;
+		lastJoinedRef.current = { code, openAt: Date.now() };
 		ws.send({
 			type: "join_room",
-			code: urlCode.toUpperCase(),
+			code,
 			name: identity.name.trim(),
 			color: identity.color,
 		});
@@ -56,11 +66,16 @@ export function Room(): JSX.Element {
 				<header className="game-bar">
 					<span className="game-bar-room">{room.code}</span>
 					<span className="game-bar-players">{room.players.length} players</span>
+					<button type="button" onClick={() => setControlsOpen(true)}>
+						Controls
+					</button>
 					<button type="button" onClick={() => { leaveRoom(); navigate("/"); }}>
 						Leave
 					</button>
 				</header>
 				<Game />
+				<ChatPanel variant="game" />
+				<ControlsModal open={controlsOpen} onClose={() => setControlsOpen(false)} />
 			</main>
 		);
 	}
@@ -141,9 +156,19 @@ export function Room(): JSX.Element {
 			)}
 
 			<footer className="status">
+				<button
+					type="button"
+					className="link-button"
+					onClick={() => setControlsOpen(true)}
+				>
+					Controls
+				</button>
+				<span className="status-dot">·</span>
 				server: {wsStatus.kind}
 				{wsStatus.kind === "closed" && ` — ${wsStatus.reason}`}
 			</footer>
+			<ChatPanel variant="lobby" />
+			<ControlsModal open={controlsOpen} onClose={() => setControlsOpen(false)} />
 		</main>
 	);
 }

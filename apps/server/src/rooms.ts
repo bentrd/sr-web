@@ -5,6 +5,7 @@ import { generateUniqueCode } from "./codes";
 export type WsData = {
 	playerId: string;
 	roomCode: string | null;
+	helloSeen: boolean;
 };
 
 type ServerPlayer = {
@@ -57,10 +58,14 @@ export class RoomStore {
 		return this.rooms.get(code);
 	}
 
-	joinRoom(code: string, player: ServerPlayer): Room | "not_found" | "already_started" {
+	joinRoom(code: string, player: ServerPlayer): Room | "not_found" {
 		const room = this.rooms.get(code);
 		if (!room) return "not_found";
-		if (room.started) return "already_started";
+		// We allow joining started rooms — the joining client will run its
+		// own sim from the map's initial state and appear as a ghost to
+		// the others. Refreshing a tab counts as a rejoin: the same player
+		// id slots back into the room and the disconnect-eviction is
+		// cancelled.
 		this.cancelEvict(player.id);
 		room.players.set(player.id, player);
 		room.lastActivityAt = Date.now();

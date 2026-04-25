@@ -5,7 +5,7 @@
 // change, update both this file AND the C++ sr_get_local_snapshot /
 // sr_push_ghost signatures in the same commit.
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type RGB = readonly [r: number, g: number, b: number];
 
@@ -37,6 +37,13 @@ export type JoinRoom = {
 export type LeaveRoom = { type: "leave_room" };
 export type StartGame = { type: "start_game" };
 
+// Optional resume — client passes the playerId it remembers from a prior
+// session. Server uses it as its assigned id (so refresh keeps the same
+// identity in a room). If empty/missing, a fresh id is minted.
+export type ClientHelloResume = { type: "hello"; playerId?: string };
+
+export type ChatSend = { type: "chat_send"; text: string };
+
 export type PlayerInfo = {
 	id: string;
 	name: string;
@@ -55,6 +62,18 @@ export type RoomState = {
 export type PlayerJoined = { type: "player_joined"; player: PlayerInfo };
 export type PlayerLeft = { type: "player_left"; id: string };
 export type GameStarted = { type: "game_started" };
+
+// Chat — kind="user" carries an authored message; kind="system" is for
+// join/leave/start announcements (playerId/name/color may be empty).
+export type ChatMsg = {
+	type: "chat";
+	kind: "user" | "system";
+	playerId: string;
+	name: string;
+	color: RGB;
+	text: string;
+	ts: number;
+};
 
 // ──────────────────────────────────────────────────────────────────────
 // Phase 4–6 — snapshot relay
@@ -102,10 +121,12 @@ export type SnapshotOut = {
 
 export type ClientMsg =
 	| ClientHello
+	| ClientHelloResume
 	| CreateRoom
 	| JoinRoom
 	| LeaveRoom
 	| StartGame
+	| ChatSend
 	| SnapshotIn;
 
 // Sent once per connection right after WS open so the client knows its
@@ -133,5 +154,6 @@ export type ServerMsg =
 	| PlayerJoined
 	| PlayerLeft
 	| GameStarted
+	| ChatMsg
 	| SnapshotOut
 	| ErrorMsg;

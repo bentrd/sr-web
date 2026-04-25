@@ -15,6 +15,25 @@ function nextPlayerId(): string {
 	return `p_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+const VALID_PLAYER_ID = /^p_[a-z0-9]{4,16}$/;
+function validResumeId(s: unknown): s is string {
+	return typeof s === "string" && VALID_PLAYER_ID.test(s);
+}
+
+function chatSystem(roomCode: string, text: string): void {
+	const room = store.getRoom(roomCode);
+	if (!room) return;
+	store.broadcast(room, {
+		type: "chat",
+		kind: "system",
+		playerId: "",
+		name: "",
+		color: [0.6, 0.6, 0.6],
+		text,
+		ts: Date.now(),
+	});
+}
+
 function validName(s: unknown): s is string {
 	return typeof s === "string" && s.trim().length > 0 && s.length <= 24;
 }
@@ -36,8 +55,10 @@ const server = Bun.serve<WsData, never>({
 		const url = new URL(req.url);
 
 		if (url.pathname === "/ws") {
+			// Provisional id — overwritten if client sends a `hello` with
+			// a previously-assigned id within the grace window.
 			const ok = server.upgrade(req, {
-				data: { playerId: nextPlayerId(), roomCode: null } satisfies WsData,
+				data: { playerId: nextPlayerId(), roomCode: null, helloSeen: false } satisfies WsData,
 			});
 			if (ok) return;
 			return new Response("upgrade failed", { status: 400 });
@@ -50,7 +71,16 @@ const server = Bun.serve<WsData, never>({
 
 	websocket: {
 		open(ws) {
-			send(ws, { type: "welcome", playerId: ws.data.playerId });
+			// Welcome happens after the client's `hello` so it carries the
+			// id the server actually adopted (which may be a resume id from
+			// a prior session). If no hello arrives within 1s, send the
+			// provisional id so old clients still work.
+			setTimeout(() => {
+				if (!ws.data.helloSeen) {
+					ws.data.helloSeen = true;
+					send(ws, { type: "welcome", playerId: ws.data.playerId });
+				}
+			}, 1000);
 		},
 
 		message(ws, raw) {
@@ -66,6 +96,13 @@ const server = Bun.serve<WsData, never>({
 			}
 
 			switch (msg.type) {
+				case "hello": {
+					if (ws.data.helloSeen) return;
+					ws.data.helloSeen = true;
+					if (validResumeId(msg.playerId)) ws.data.playerId = msg.playerId;
+					return send(ws, { type: "welcome", playerId: ws.data.playerId });
+				}
+
 				case "ping":
 					return send(ws, { type: "pong", ts: msg.ts, serverTs: Date.now() });
 
@@ -103,6 +140,7 @@ const server = Bun.serve<WsData, never>({
 						color: msg.color,
 						ws,
 					};
+					const wasMember = store.getRoom(code)?.players.has(player.id) ?? false;
 					const result = store.joinRoom(code, player);
 					if (result === "not_found") {
 						return send(ws, {
@@ -111,31 +149,31 @@ const server = Bun.serve<WsData, never>({
 							message: `no room with code ${code}`,
 						});
 					}
-					if (result === "already_started") {
-						return send(ws, {
-							type: "error",
-							code: "room_already_started",
-							message: "this room has already started a game",
-						});
-					}
 					ws.data.roomCode = result.code;
 					// Tell everyone in the room (including the new joiner) the new state.
 					store.broadcast(result, store.roomStateMsg(result));
-					store.broadcast(result, {
-						type: "player_joined",
-						player: playerInfo(player),
-					}, player.id);
+					if (!wasMember) {
+						store.broadcast(result, {
+							type: "player_joined",
+							player: playerInfo(player),
+						}, player.id);
+						chatSystem(result.code, `${player.name} joined`);
+					}
 					return;
 				}
 
 				case "leave_room": {
 					if (!ws.data.roomCode) return;
 					const code = ws.data.roomCode;
+					const room = store.getRoom(code);
+					const leaver = room?.players.get(ws.data.playerId);
+					const leaverName = leaver?.name ?? "A player";
 					const remaining = store.leaveRoom(ws.data.playerId, code);
 					ws.data.roomCode = null;
 					if (remaining) {
 						store.broadcast(remaining, { type: "player_left", id: ws.data.playerId });
 						store.broadcast(remaining, store.roomStateMsg(remaining));
+						chatSystem(code, `${leaverName} left`);
 					}
 					return;
 				}
@@ -165,6 +203,27 @@ const server = Bun.serve<WsData, never>({
 					}
 					store.broadcast(result, { type: "game_started" });
 					store.broadcast(result, store.roomStateMsg(result));
+					chatSystem(result.code, "Game started");
+					return;
+				}
+
+				case "chat_send": {
+					if (!ws.data.roomCode) return;
+					const room = store.getRoom(ws.data.roomCode);
+					if (!room) return;
+					const me = room.players.get(ws.data.playerId);
+					if (!me) return;
+					const text = String(msg.text ?? "").slice(0, 240).trim();
+					if (!text) return;
+					store.broadcast(room, {
+						type: "chat",
+						kind: "user",
+						playerId: me.id,
+						name: me.name,
+						color: me.color,
+						text,
+						ts: Date.now(),
+					});
 					return;
 				}
 
@@ -197,11 +256,14 @@ const server = Bun.serve<WsData, never>({
 		close(ws) {
 			const code = ws.data.roomCode;
 			if (!code) return;
-			// Schedule grace-period eviction. If the player reconnects with
-			// the same id (currently we don't, but the hook is here) we cancel.
+			const leaverName = store.getRoom(code)?.players.get(ws.data.playerId)?.name ?? "A player";
+			// Schedule grace-period eviction. The client persists its
+			// playerId in localStorage and re-sends it via `hello` on
+			// reconnect, which cancels this timer in joinRoom().
 			store.scheduleEvict(ws.data.playerId, code, (room) => {
 				store.broadcast(room, { type: "player_left", id: ws.data.playerId });
 				store.broadcast(room, store.roomStateMsg(room));
+				chatSystem(room.code, `${leaverName} disconnected`);
 			});
 		},
 	},

@@ -10,10 +10,27 @@ export type StatusListener = (s: WsStatus) => void;
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 15_000;
+const PLAYER_ID_KEY = "sr-web.playerId";
+
+function loadPlayerId(): string | null {
+	try {
+		return localStorage.getItem(PLAYER_ID_KEY);
+	} catch {
+		return null;
+	}
+}
+
+function savePlayerId(id: string): void {
+	try {
+		localStorage.setItem(PLAYER_ID_KEY, id);
+	} catch {
+		// localStorage disabled — not fatal, server will mint a new id
+	}
+}
 
 export class WsClient {
 	private ws: WebSocket | null = null;
-	private playerId: string | null = null;
+	private playerId: string | null = loadPlayerId();
 	private status: WsStatus = { kind: "connecting" };
 	private readonly msgListeners = new Set<WsListener>();
 	private readonly statusListeners = new Set<StatusListener>();
@@ -33,6 +50,9 @@ export class WsClient {
 
 		ws.addEventListener("open", () => {
 			this.reconnectAttempt = 0;
+			// Send our remembered id so the server resumes our session
+			// instead of minting a new one. Empty/null on first ever visit.
+			ws.send(JSON.stringify({ type: "hello", playerId: this.playerId ?? undefined }));
 			this.setStatus({ kind: "open" });
 		});
 
@@ -43,7 +63,10 @@ export class WsClient {
 			} catch {
 				return;
 			}
-			if (msg.type === "welcome") this.playerId = msg.playerId;
+			if (msg.type === "welcome") {
+				this.playerId = msg.playerId;
+				savePlayerId(msg.playerId);
+			}
 			for (const l of this.msgListeners) l(msg);
 		});
 

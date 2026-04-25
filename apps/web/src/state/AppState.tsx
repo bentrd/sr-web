@@ -7,9 +7,12 @@ import {
 	useState,
 	type ReactNode,
 } from "react";
-import type { RGB, RoomState, ServerMsg } from "@sr-web/protocol";
+import type { ChatMsg, RGB, RoomState, ServerMsg } from "@sr-web/protocol";
 import { WsClient, type WsStatus } from "../net/ws";
 import { randomColor } from "../lobby/color";
+import { type Bindings, loadBindings, saveBindings } from "./bindings";
+
+const MAX_CHAT_HISTORY = 80;
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
 const IDENTITY_KEY = "sr-web.identity";
@@ -49,8 +52,12 @@ export type AppState = {
 	playerId: string | null;
 	identity: Identity;
 	setIdentity: (i: Identity) => void;
+	bindings: Bindings;
+	setBindings: (b: Bindings) => void;
 	room: RoomState | null;
 	leaveRoom: () => void;
+	chat: readonly ChatMsg[];
+	sendChat: (text: string) => void;
 	lastError: { code: string; message: string } | null;
 	clearError: () => void;
 };
@@ -65,7 +72,9 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 	const [wsStatus, setWsStatus] = useState<WsStatus>(ws.getStatus());
 	const [playerId, setPlayerId] = useState<string | null>(ws.getPlayerId());
 	const [identity, setIdentityState] = useState<Identity>(() => loadIdentity());
+	const [bindings, setBindingsState] = useState<Bindings>(() => loadBindings());
 	const [room, setRoom] = useState<RoomState | null>(null);
+	const [chat, setChat] = useState<readonly ChatMsg[]>([]);
 	const [lastError, setLastError] =
 		useState<{ code: string; message: string } | null>(null);
 
@@ -84,6 +93,14 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 					break;
 				case "game_started":
 					// Will trigger navigation in Room.tsx via the `started` flag in room_state
+					break;
+				case "chat":
+					setChat((prev) => {
+						const next = [...prev, msg];
+						return next.length > MAX_CHAT_HISTORY
+							? next.slice(next.length - MAX_CHAT_HISTORY)
+							: next;
+					});
 					break;
 				case "error":
 					setLastError({ code: msg.code, message: msg.message });
@@ -106,10 +123,22 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 		saveIdentity(i);
 	};
 
+	const setBindings = (b: Bindings): void => {
+		setBindingsState(b);
+		saveBindings(b);
+	};
+
 	const leaveRoom = (): void => {
 		ws.send({ type: "leave_room" });
 		setRoom(null);
+		setChat([]);
 		setLastError(null);
+	};
+
+	const sendChat = (text: string): void => {
+		const trimmed = text.trim();
+		if (!trimmed) return;
+		ws.send({ type: "chat_send", text: trimmed.slice(0, 240) });
 	};
 
 	const value = useMemo<AppState>(
@@ -119,13 +148,17 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 			playerId,
 			identity,
 			setIdentity,
+			bindings,
+			setBindings,
 			room,
 			leaveRoom,
+			chat,
+			sendChat,
 			lastError,
 			clearError: () => setLastError(null),
 		}),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[ws, wsStatus, playerId, identity, room, lastError],
+		[ws, wsStatus, playerId, identity, bindings, room, chat, lastError],
 	);
 
 	return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
