@@ -229,6 +229,42 @@ When picking up a task: tick the box in a commit *before* starting (claim it), o
 
 ---
 
+## Phase 8 — UX polish (post-launch)
+
+*Independent of Phase 7. Each item is its own commit; no cross-task ordering.*
+
+### 8a. Public lobbies + room metadata
+
+- [x] Extend `create_room` with `displayName`, `maxPlayers` (-1 = unlimited), `public` flag (`packages/protocol/src/index.ts`)
+- [x] `RoomState` carries the same fields; server enforces capacity with `room_full` error
+- [x] `set_room_visibility` C→S message; `subscribe_public_rooms` / `unsubscribe_public_rooms` + `public_rooms_list` S→C
+- [x] Server-side `Map<code, Room>` tracks `isPublic`; broadcast subscribers on join/leave/start/gc/visibility-change
+- [x] Home page renders a live public-lobby browser with map filter + capacity bars
+- [x] Room header has a Public/Private toggle (host only)
+- [x] **Exit gate**: typecheck green; manual round-trip from second tab shows public room appearing in the list
+
+### 8b. Tailwind v4 redesign
+
+- [x] Add `tailwindcss` + `@tailwindcss/vite` to `apps/web` (utilities-only, preflight skipped)
+- [x] Wrap legacy `styles.css` inside `@layer base` (per CSS Cascade Layers spec, unlayered always wins) — see `apps/web/src/tailwind.css`
+- [x] Rewrite `Home.tsx` with utility classes, full-page width, muted amber primary buttons
+- [x] Visibility toggle as segmented control (Private/Public) with proper active-state separation
+- [x] **Exit gate**: prod build green; lobby looks intentional, no clipped layouts
+
+### 8c. Game options modal
+
+- [ ] C++: `visuals_config.{h,cpp}` holding background / walls body & stripe / wallclimb stripe / grapple stripe / grapple cord / grapple head color + size
+- [ ] `instance::draw()` reads bg color from `visuals_config` per frame; `draw_util.cpp` reads body / stripe / cord / head colors and head size from the config
+- [ ] 7 new `sr_set_*` ABI exports in `network/sr_api.cpp` + `EXPORTED_FUNCTIONS` in `CMakeLists.txt`
+- [ ] JS: `state/visuals.ts` (types + defaults + localStorage), `AppState` extended with `visuals` + `setVisuals`
+- [ ] `OptionsModal.tsx` (mirrors `ControlsModal` pattern) with a 16M color picker per slot + slider for grapple-head size + FPS
+- [ ] Move FPS row out of `ControlsModal` into `OptionsModal`
+- [ ] `Game.tsx` cwraps the 7 setters and applies them in a `useEffect([visuals, status])`
+- [ ] `Room.tsx` adds an Options button next to the Controls button in the game-bar
+- [ ] **Exit gate**: WASM rebuild succeeds; toggling each color in the modal updates the running game live; settings survive reload
+
+---
+
 ## Non-goals
 
 - Server-authoritative simulation, anti-cheat

@@ -23,7 +23,7 @@ export const GAME_ACTIONS = [
 ] as const;
 
 // UI actions are handled in JS only (never pushed to WASM).
-export const UI_ACTIONS = ["chat"] as const;
+export const UI_ACTIONS = ["chat", "reset"] as const;
 
 export const ACTIONS = [...GAME_ACTIONS, ...UI_ACTIONS] as const;
 export type Action = typeof ACTIONS[number];
@@ -41,6 +41,7 @@ export const DEFAULT_BINDINGS: Bindings = {
 	item:    { code: 69,  label: "E" },     // GLFW_KEY_E
 	swap:    { code: 70,  label: "F" },     // GLFW_KEY_F
 	chat:    { code: 257, label: "Enter" }, // GLFW_KEY_ENTER (UI-only)
+	reset:   { code: 82,  label: "R" },     // GLFW_KEY_R       (UI-only)
 };
 
 const STORAGE_KEY = "sr-web.bindings";
@@ -161,13 +162,18 @@ function domKeyCodeToGlfw(keyCode: number): number {
 export function eventToBinding(e: KeyboardEvent): Binding | null {
 	const code = domKeyCodeToGlfw(e.keyCode);
 	if (code <= 0) return null;
-	let label: string;
+	// Look up named keys first so Space, Shift, etc. don't fall into the
+	// length===1 branch (Space's e.key is " ", which would render as a
+	// blank cap in the modal).
+	const named = NAMED_KEY_LABEL[e.code];
+	if (named) return { code, label: named };
 	if (e.key.length === 1) {
-		label = e.key.toUpperCase();
-	} else {
-		label = NAMED_KEY_LABEL[e.code] ?? e.key;
+		const trimmed = e.key.trim();
+		// Defensive: a single whitespace key with no e.code match would
+		// still render blank. Force "Space" in that case.
+		return { code, label: trimmed.length > 0 ? trimmed.toUpperCase() : "Space" };
 	}
-	return { code, label };
+	return { code, label: e.key };
 }
 
 const NAMED_KEY_LABEL: Readonly<Record<string, string>> = {
@@ -188,6 +194,7 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
 	item: "Use item",
 	swap: "Swap item",
 	chat: "Open chat",
+	reset: "Reset to start",
 };
 
 // Custom DOM event used to ask the active ChatPanel to focus its input

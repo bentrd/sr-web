@@ -1,0 +1,22 @@
+/* Tailwind v4 — utilities-only entry, with the legacy global styles tucked
+ * into the `base` layer so Tailwind utilities can override them.
+ *
+ * Why this matters: per the CSS Cascade spec, *unlayered* declarations
+ * always win against any *layered* declarations, regardless of specificity.
+ * If styles.css were imported unlayered (the obvious approach), its bare
+ * `button { ... }` and `input { ... }` rules would silently beat every
+ * Tailwind utility we put on a button or input — `bg-transparent` and
+ * `rounded-none` would be dead in the water.
+ *
+ * We import styles.css into `layer(base)` here so utilities (in
+ * `layer(utilities)`, declared later in the layer order below) properly
+ * override the global element rules. Pages that haven't been migrated to
+ * Tailwind continue to look identical because they don't apply any
+ * competing utility classes.
+ *
+ * We still skip Tailwind's preflight reset.
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "./styles.css" layer(base);
+@import "tailwindcss/utilities.css" layer(utilities);

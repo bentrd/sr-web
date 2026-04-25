@@ -15,6 +15,12 @@ type ServerPlayer = {
 	ws: ServerWebSocket<WsData>;
 };
 
+export type CreateRoomOptions = {
+	displayName: string;
+	maxPlayers: number;
+	isPublic: boolean;
+};
+
 type Room = {
 	code: string;
 	mapId: string;
@@ -23,6 +29,9 @@ type Room = {
 	started: boolean;
 	createdAt: number;
 	lastActivityAt: number;
+	displayName: string;
+	maxPlayers: number; // -1 = unlimited
+	isPublic: boolean;
 };
 
 const DISCONNECT_GRACE_MS = 30_000;
@@ -34,11 +43,14 @@ export class RoomStore {
 	// don't reconnect within the grace period
 	private readonly pendingEvict = new Map<string, ReturnType<typeof setTimeout>>();
 
+	// Sockets currently subscribed to the public rooms list (homepage).
+	private readonly publicSubscribers = new Set<ServerWebSocket<WsData>>();
+
 	constructor() {
 		setInterval(() => this.gcIdleRooms(), 60_000);
 	}
 
-	createRoom(player: ServerPlayer, mapId: string): Room {
+	createRoom(player: ServerPlayer, mapId: string, opts: CreateRoomOptions): Room {
 		const code = generateUniqueCode(new Set(this.rooms.keys()));
 		const now = Date.now();
 		const room: Room = {
@@ -49,9 +61,13 @@ export class RoomStore {
 			started: false,
 			createdAt: now,
 			lastActivityAt: now,
+			displayName: opts.displayName,
+			maxPlayers: opts.maxPlayers,
+			isPublic: opts.isPublic,
 		};
 		// Single-player room — name is trivially unique.
 		this.rooms.set(code, room);
+		if (room.isPublic) this.broadcastPublicList();
 		return room;
 	}
 
@@ -75,9 +91,18 @@ export class RoomStore {
 		return this.rooms.get(code);
 	}
 
-	joinRoom(code: string, player: ServerPlayer): Room | "not_found" {
+	joinRoom(code: string, player: ServerPlayer): Room | "not_found" | "full" {
 		const room = this.rooms.get(code);
 		if (!room) return "not_found";
+		// Capacity check skips returning members (refresh) and unlimited rooms.
+		const isReturning = room.players.has(player.id);
+		if (
+			!isReturning &&
+			room.maxPlayers !== -1 &&
+			room.players.size >= room.maxPlayers
+		) {
+			return "full";
+		}
 		// We allow joining started rooms — the joining client will run its
 		// own sim from the map's initial state and appear as a ghost to
 		// the others. Refreshing a tab counts as a rejoin: the same player
@@ -86,6 +111,7 @@ export class RoomStore {
 		this.cancelEvict(player.id);
 		room.players.set(player.id, player);
 		room.lastActivityAt = Date.now();
+		if (room.isPublic) this.broadcastPublicList();
 		return room;
 	}
 
@@ -95,6 +121,7 @@ export class RoomStore {
 		if (room.hostId !== byPlayerId) return "not_host";
 		room.started = true;
 		room.lastActivityAt = Date.now();
+		if (room.isPublic) this.broadcastPublicList();
 		return room;
 	}
 
@@ -102,11 +129,13 @@ export class RoomStore {
 	leaveRoom(playerId: string, code: string): Room | null {
 		const room = this.rooms.get(code);
 		if (!room) return null;
+		const wasPublic = room.isPublic;
 		room.players.delete(playerId);
 		this.cancelEvict(playerId);
 		this.maybeReassignHost(room);
 		this.maybeDeleteEmptyRoom(room);
 		room.lastActivityAt = Date.now();
+		if (wasPublic) this.broadcastPublicList();
 		return room.players.size > 0 ? room : null;
 	}
 
@@ -143,12 +172,15 @@ export class RoomStore {
 
 	private gcIdleRooms(): void {
 		const now = Date.now();
+		let publicChanged = false;
 		for (const [code, room] of this.rooms) {
 			if (now - room.lastActivityAt > IDLE_ROOM_GC_MS) {
 				console.log(`[rooms] gc idle room ${code}`);
 				this.rooms.delete(code);
+				if (room.isPublic) publicChanged = true;
 			}
 		}
+		if (publicChanged) this.broadcastPublicList();
 	}
 
 	// Broadcast helpers — kept here so the index.ts message handlers stay
@@ -174,7 +206,82 @@ export class RoomStore {
 			hostId: room.hostId,
 			players: [...room.players.values()].map(playerInfo),
 			started: room.started,
+			displayName: room.displayName,
+			maxPlayers: room.maxPlayers,
+			public: room.isPublic,
 		};
+	}
+
+	// Host-only: toggle a room's public/private flag mid-session.
+	setVisibility(code: string, byPlayerId: string, isPublic: boolean):
+		| Room
+		| "not_found"
+		| "not_host"
+	{
+		const room = this.rooms.get(code);
+		if (!room) return "not_found";
+		if (room.hostId !== byPlayerId) return "not_host";
+		if (room.isPublic === isPublic) return room;
+		room.isPublic = isPublic;
+		room.lastActivityAt = Date.now();
+		this.broadcastPublicList();
+		return room;
+	}
+
+	publicRoomSummaries() {
+		const out = [] as Array<{
+			code: string;
+			displayName: string;
+			mapId: string;
+			playerCount: number;
+			maxPlayers: number;
+			started: boolean;
+		}>;
+		for (const room of this.rooms.values()) {
+			if (!room.isPublic) continue;
+			out.push({
+				code: room.code,
+				displayName: room.displayName,
+				mapId: room.mapId,
+				playerCount: room.players.size,
+				maxPlayers: room.maxPlayers,
+				started: room.started,
+			});
+		}
+		return out;
+	}
+
+	subscribePublic(ws: ServerWebSocket<WsData>): void {
+		this.publicSubscribers.add(ws);
+		try {
+			ws.send(
+				JSON.stringify({
+					type: "public_rooms_list",
+					rooms: this.publicRoomSummaries(),
+				}),
+			);
+		} catch {
+			// Ignore — subscribe is best-effort.
+		}
+	}
+
+	unsubscribePublic(ws: ServerWebSocket<WsData>): void {
+		this.publicSubscribers.delete(ws);
+	}
+
+	broadcastPublicList(): void {
+		if (this.publicSubscribers.size === 0) return;
+		const data = JSON.stringify({
+			type: "public_rooms_list",
+			rooms: this.publicRoomSummaries(),
+		});
+		for (const ws of this.publicSubscribers) {
+			try {
+				ws.send(data);
+			} catch {
+				// Ignore; they'll be cleaned up on close.
+			}
+		}
 	}
 }
 

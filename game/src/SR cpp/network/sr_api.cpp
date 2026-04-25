@@ -7,6 +7,10 @@
 #include <cstring>
 #include <string>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "sr_api.h"
 #include "../instance.h"
 #include "../playground.h"
@@ -216,5 +220,37 @@ extern "C"
 		emu::player* p = g_inst->m_playground.m_player;
 		if (p == nullptr) return;
 		p->set_position(emu::vector{ x, y });
+	}
+
+	// Snap the local player back to the map's PlayerStart actor and zero
+	// their velocity. Bound to the "reset" UI key on the JS side.
+	void sr_reset_local()
+	{
+		if (g_inst == nullptr) return;
+		auto& pg = g_inst->m_playground;
+		emu::player* p = pg.m_player;
+		if (p == nullptr || p->m_actor == nullptr) return;
+		const emu::level_actor& start = pg.m_level.get_actor("PlayerStart");
+		p->set_position(start.position);
+		p->m_actor->d.velocity = emu::vector{ 0.0f, 0.0f };
+	}
+
+	// Configure the WASM main loop's frame pacing.
+	//   fps <= 0  → use requestAnimationFrame (monitor refresh, default)
+	//   fps > 0   → use setTimeout(1000/fps) — lets the user uncap above
+	//              monitor refresh OR throttle below it for low-end machines.
+	void sr_set_target_fps(int fps)
+	{
+#ifdef __EMSCRIPTEN__
+		if (fps <= 0)
+		{
+			emscripten_set_main_loop_timing(EM_TIMING_RAF, 1);
+			return;
+		}
+		const int ms = 1000 / fps;
+		emscripten_set_main_loop_timing(EM_TIMING_SETTIMEOUT, ms < 1 ? 1 : ms);
+#else
+		(void)fps;
+#endif
 	}
 }

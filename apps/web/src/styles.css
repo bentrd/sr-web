@@ -28,14 +28,21 @@ body,
 body {
 	display: grid;
 	place-items: start center;
-	padding: 2rem 1rem;
+	padding: 2rem 1.25rem;
 }
 
 .lobby {
-	width: min(46rem, 100%);
+	width: min(80rem, 100%);
 	display: flex;
 	flex-direction: column;
 	gap: 1.5rem;
+}
+
+.home {
+	width: min(80rem, 100%);
+	display: flex;
+	flex-direction: column;
+	gap: 1.25rem;
 }
 
 h1 {
@@ -414,6 +421,27 @@ button.primary {
 	font-weight: 500;
 }
 
+.fps-row {
+	display: grid;
+	grid-template-columns: auto 1fr auto;
+	gap: 0.75rem;
+	align-items: center;
+	padding-top: 0.25rem;
+	border-top: 1px solid var(--border);
+}
+
+.fps-row input[type="range"] {
+	width: 100%;
+	accent-color: var(--accent);
+}
+
+.fps-value {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	color: var(--accent);
+	min-width: 2.5ch;
+	text-align: right;
+}
+
 .bindings-table td:last-child {
 	text-align: right;
 }
@@ -669,4 +697,134 @@ button.primary {
 
 .cmd-player-row:hover {
 	border-color: var(--accent);
+}
+
+/* ── Public lobbies (Home page list) ───────────────────────────────── */
+.public-room-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.public-room-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.6rem 0.75rem;
+	border: 1px solid #2a2a2a;
+	border-radius: 6px;
+	background: #1a1a1a;
+}
+
+.public-room-info {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	min-width: 0;
+}
+
+.public-room-name {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.public-room-meta {
+	font-size: 0.85em;
+	color: #888;
+	display: flex;
+	gap: 0.5rem;
+	align-items: center;
+}
+
+.public-room-sep {
+	color: #555;
+}
+
+.public-room-running {
+	color: #c8a657;
+}
+
+.public-room-map {
+	color: #aaa;
+}
+
+/* ── Create-room form: subtle hint + visibility toggle ─────────────── */
+.hint-subtle {
+	font-size: 0.75em;
+	color: #777;
+	margin-top: 0.25rem;
+}
+
+.visibility-toggle {
+	display: inline-flex;
+	border: 1px solid #2a2a2a;
+	border-radius: 6px;
+	overflow: hidden;
+	background: #1a1a1a;
+	width: fit-content;
+}
+
+.visibility-option {
+	background: transparent;
+	border: 0;
+	color: #aaa;
+	padding: 0.4rem 0.9rem;
+	font: inherit;
+	cursor: pointer;
+	transition: background 120ms ease, color 120ms ease;
+}
+
+.visibility-option:hover:not(.is-active) {
+	color: #ddd;
+	background: #222;
+}
+
+.visibility-option.is-active {
+	background: #2d4a2d;
+	color: #d4f0d4;
+}
+
+.visibility-option:first-child.is-active {
+	background: #3a3a3a;
+	color: #f0f0f0;
+}
+
+/* ── Room header extras ────────────────────────────────────────────── */
+.room-display-name {
+	font-size: 1.4rem;
+	font-weight: 600;
+	margin-top: 0.15rem;
+}
+
+.room-code-sub {
+	font-size: 0.8em;
+	color: #888;
+	margin-top: 0.15rem;
+}
+
+.room-code-inline {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	color: #ddd;
+	letter-spacing: 0.08em;
+}
+
+.visibility-public,
+.visibility-private {
+	font-size: 0.85em;
+}
+
+.visibility-public {
+	border-color: #3a6e3a;
+	color: #b9e6b9;
+}
+
+.visibility-private {
+	border-color: #555;
+	color: #bbb;
 }

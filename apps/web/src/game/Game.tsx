@@ -19,7 +19,7 @@ import { useApp } from "../state/AppState";
 import { rgbToCss } from "../lobby/color";
 import { loadSrModule, type SrModule } from "../wasm/loadModule";
 import { base64ToBytes, bytesToBase64, decodeSnapshot, type DecodedSnapshot } from "./snapshotCodec";
-import { GAME_ACTIONS } from "../state/bindings";
+import { GAME_ACTIONS, eventToBinding } from "../state/bindings";
 
 // 60 Hz network send rate. Sim runs at ~300 Hz inside WASM, render at
 // monitor refresh — the three are deliberately decoupled (see AGENTS.md).
@@ -90,6 +90,8 @@ interface CAbi {
 	getPlayerScreenPos: (id: string) => { x: number; y: number } | null;
 	setBinding: (action: number, glfwKey: number) => void;
 	teleportLocal: (x: number, y: number) => void;
+	resetLocal: () => void;
+	setTargetFps: (fps: number) => void;
 }
 
 function bindCAbi(mod: SrModule): CAbi {
@@ -112,6 +114,8 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_get_pos = mod.cwrap("sr_get_player_screen_pos", "number", ["string", "number", "number"]);
 	const f_set_binding = mod.cwrap("sr_set_binding", null, ["number", "number"]);
 	const f_teleport = mod.cwrap("sr_teleport_local", null, ["number", "number"]);
+	const f_reset = mod.cwrap("sr_reset_local", null, []);
+	const f_set_fps = mod.cwrap("sr_set_target_fps", null, ["number"]);
 
 	// Persistent scratch buffers in WASM heap. Allocated once; freed on
 	// page unload. malloc/free are exported but we never hit them more
@@ -167,6 +171,12 @@ function bindCAbi(mod: SrModule): CAbi {
 		teleportLocal: (x, y) => {
 			f_teleport(x, y);
 		},
+		resetLocal: () => {
+			f_reset();
+		},
+		setTargetFps: (fps) => {
+			f_set_fps(fps);
+		},
 	};
 }
 
@@ -184,7 +194,7 @@ const HOVER_RADIUS_PX = 30;
 const HOVER_RADIUS_SQ = HOVER_RADIUS_PX * HOVER_RADIUS_PX;
 
 export function Game(): JSX.Element {
-	const { ws, identity, bindings, room, playerId } = useApp();
+	const { ws, identity, bindings, targetFps, room, playerId } = useApp();
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const abiRef = useRef<CAbi | null>(null);
@@ -244,6 +254,36 @@ export function Game(): JSX.Element {
 		if (status !== "ready" || !abi) return;
 		GAME_ACTIONS.forEach((action, idx) => abi.setBinding(idx, bindings[action].code));
 	}, [bindings, status]);
+
+	// Apply the user-chosen render FPS cap to the WASM main loop. Re-runs
+	// whenever the slider in ControlsModal moves.
+	useEffect(() => {
+		const abi = abiRef.current;
+		if (status !== "ready" || !abi) return;
+		abi.setTargetFps(targetFps);
+	}, [targetFps, status]);
+
+	// Reset key: snap back to the map's PlayerStart and clear velocity.
+	// Same window-capture pattern as the chat key — runs before WASM's
+	// GLFW shim so the keystroke doesn't also feed into game inputs.
+	useEffect(() => {
+		if (status !== "ready") return;
+		const wantedCode = bindings.reset.code;
+		const onKey = (e: KeyboardEvent): void => {
+			const ae = document.activeElement;
+			if (ae instanceof HTMLElement &&
+				(ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) {
+				return;
+			}
+			const bind = eventToBinding(e);
+			if (bind === null || bind.code !== wantedCode) return;
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			abiRef.current?.resetLocal();
+		};
+		window.addEventListener("keydown", onKey, true);
+		return () => window.removeEventListener("keydown", onKey, true);
+	}, [status, bindings.reset.code]);
 
 	// Push the local snapshot at 30 Hz. Idle until the ABI is ready.
 	useEffect(() => {

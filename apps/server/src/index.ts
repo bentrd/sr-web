@@ -107,11 +107,23 @@ const server = Bun.serve<WsData, never>({
 					return send(ws, { type: "pong", ts: msg.ts, serverTs: Date.now() });
 
 				case "create_room": {
-					if (!validName(msg.name) || !validColor(msg.color) || typeof msg.mapId !== "string") {
+					if (
+						!validName(msg.name) ||
+						!validColor(msg.color) ||
+						typeof msg.mapId !== "string" ||
+						typeof msg.displayName !== "string" ||
+						msg.displayName.trim().length === 0 ||
+						msg.displayName.trim().length > 48 ||
+						typeof msg.maxPlayers !== "number" ||
+						!Number.isInteger(msg.maxPlayers) ||
+						(msg.maxPlayers !== -1 && msg.maxPlayers < 2) ||
+						msg.maxPlayers > 64 ||
+						typeof msg.public !== "boolean"
+					) {
 						return send(ws, {
 							type: "error",
 							code: "validation",
-							message: "name, color, and mapId required",
+							message: "name, color, mapId, displayName, maxPlayers, and public required",
 						});
 					}
 					const player = {
@@ -120,7 +132,11 @@ const server = Bun.serve<WsData, never>({
 						color: msg.color,
 						ws,
 					};
-					const room = store.createRoom(player, msg.mapId);
+					const room = store.createRoom(player, msg.mapId, {
+						displayName: msg.displayName.trim(),
+						maxPlayers: msg.maxPlayers,
+						isPublic: msg.public,
+					});
 					ws.data.roomCode = room.code;
 					return send(ws, store.roomStateMsg(room));
 				}
@@ -154,6 +170,13 @@ const server = Bun.serve<WsData, never>({
 							type: "error",
 							code: "room_not_found",
 							message: `no room with code ${code}`,
+						});
+					}
+					if (result === "full") {
+						return send(ws, {
+							type: "error",
+							code: "room_full",
+							message: `room ${code} is full`,
 						});
 					}
 					ws.data.roomCode = result.code;
@@ -251,6 +274,50 @@ const server = Bun.serve<WsData, never>({
 					return;
 				}
 
+				case "set_room_visibility": {
+					if (!ws.data.roomCode) {
+						return send(ws, {
+							type: "error",
+							code: "not_in_room",
+							message: "join or create a room first",
+						});
+					}
+					if (typeof msg.public !== "boolean") {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "set_room_visibility requires { public: boolean }",
+						});
+					}
+					const result = store.setVisibility(ws.data.roomCode, ws.data.playerId, msg.public);
+					if (result === "not_found") {
+						return send(ws, {
+							type: "error",
+							code: "room_not_found",
+							message: "your room no longer exists",
+						});
+					}
+					if (result === "not_host") {
+						return send(ws, {
+							type: "error",
+							code: "not_host",
+							message: "only the host can change visibility",
+						});
+					}
+					store.broadcast(result, store.roomStateMsg(result));
+					return;
+				}
+
+				case "subscribe_public_rooms": {
+					store.subscribePublic(ws);
+					return;
+				}
+
+				case "unsubscribe_public_rooms": {
+					store.unsubscribePublic(ws);
+					return;
+				}
+
 				case "tp": {
 					if (!ws.data.roomCode) return;
 					const room = store.getRoom(ws.data.roomCode);
@@ -291,6 +358,7 @@ const server = Bun.serve<WsData, never>({
 		},
 
 		close(ws) {
+			store.unsubscribePublic(ws);
 			const code = ws.data.roomCode;
 			if (!code) return;
 			const leaverName = store.getRoom(code)?.players.get(ws.data.playerId)?.name ?? "A player";

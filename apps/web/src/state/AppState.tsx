@@ -1,5 +1,6 @@
 import {
 	createContext,
+	useCallback,
 	useContext,
 	useEffect,
 	useMemo,
@@ -7,7 +8,13 @@ import {
 	useState,
 	type ReactNode,
 } from "react";
-import type { ChatMsg, RGB, RoomState, ServerMsg } from "@sr-web/protocol";
+import type {
+	ChatMsg,
+	PublicRoomSummary,
+	RGB,
+	RoomState,
+	ServerMsg,
+} from "@sr-web/protocol";
 import { WsClient, type WsStatus } from "../net/ws";
 import { randomColor } from "../lobby/color";
 import { type Bindings, loadBindings, saveBindings } from "./bindings";
@@ -16,6 +23,32 @@ const MAX_CHAT_HISTORY = 80;
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
 const IDENTITY_KEY = "sr-web.identity";
+const FPS_KEY = "sr-web.target-fps";
+
+// Match what the C++ side accepts (sr_set_target_fps clamps internally too).
+export const FPS_MIN = 30;
+export const FPS_MAX = 300;
+export const FPS_DEFAULT = 60;
+
+function loadTargetFps(): number {
+	try {
+		const raw = localStorage.getItem(FPS_KEY);
+		if (raw === null) return FPS_DEFAULT;
+		const n = Number(raw);
+		if (!Number.isFinite(n)) return FPS_DEFAULT;
+		return Math.max(FPS_MIN, Math.min(FPS_MAX, Math.round(n)));
+	} catch {
+		return FPS_DEFAULT;
+	}
+}
+
+function saveTargetFps(fps: number): void {
+	try {
+		localStorage.setItem(FPS_KEY, String(fps));
+	} catch {
+		// localStorage may be disabled
+	}
+}
 
 export type Identity = { name: string; color: RGB };
 
@@ -54,12 +87,17 @@ export type AppState = {
 	setIdentity: (i: Identity) => void;
 	bindings: Bindings;
 	setBindings: (b: Bindings) => void;
+	targetFps: number;
+	setTargetFps: (fps: number) => void;
 	room: RoomState | null;
 	leaveRoom: () => void;
 	chat: readonly ChatMsg[];
 	sendChat: (text: string) => void;
 	lastError: { code: string; message: string } | null;
 	clearError: () => void;
+	publicRooms: readonly PublicRoomSummary[];
+	subscribePublicRooms: () => void;
+	unsubscribePublicRooms: () => void;
 };
 
 const AppCtx = createContext<AppState | null>(null);
@@ -73,10 +111,12 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 	const [playerId, setPlayerId] = useState<string | null>(ws.getPlayerId());
 	const [identity, setIdentityState] = useState<Identity>(() => loadIdentity());
 	const [bindings, setBindingsState] = useState<Bindings>(() => loadBindings());
+	const [targetFps, setTargetFpsState] = useState<number>(() => loadTargetFps());
 	const [room, setRoom] = useState<RoomState | null>(null);
 	const [chat, setChat] = useState<readonly ChatMsg[]>([]);
 	const [lastError, setLastError] =
 		useState<{ code: string; message: string } | null>(null);
+	const [publicRooms, setPublicRooms] = useState<readonly PublicRoomSummary[]>([]);
 
 	// Block key events from reaching Emscripten's GLFW shim while a text
 	// input has focus. Emscripten registers `addEventListener("keydown",
@@ -131,6 +171,9 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 				case "error":
 					setLastError({ code: msg.code, message: msg.message });
 					break;
+				case "public_rooms_list":
+					setPublicRooms(msg.rooms);
+					break;
 			}
 		});
 		return () => {
@@ -154,6 +197,12 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 		saveBindings(b);
 	};
 
+	const setTargetFps = (fps: number): void => {
+		const clamped = Math.max(FPS_MIN, Math.min(FPS_MAX, Math.round(fps)));
+		setTargetFpsState(clamped);
+		saveTargetFps(clamped);
+	};
+
 	const leaveRoom = (): void => {
 		ws.send({ type: "leave_room" });
 		setRoom(null);
@@ -167,6 +216,14 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 		ws.send({ type: "chat_send", text: trimmed.slice(0, 240) });
 	};
 
+	const subscribePublicRooms = useCallback((): void => {
+		ws.send({ type: "subscribe_public_rooms" });
+	}, [ws]);
+
+	const unsubscribePublicRooms = useCallback((): void => {
+		ws.send({ type: "unsubscribe_public_rooms" });
+	}, [ws]);
+
 	const value = useMemo<AppState>(
 		() => ({
 			ws,
@@ -176,15 +233,20 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 			setIdentity,
 			bindings,
 			setBindings,
+			targetFps,
+			setTargetFps,
 			room,
 			leaveRoom,
 			chat,
 			sendChat,
 			lastError,
 			clearError: () => setLastError(null),
+			publicRooms,
+			subscribePublicRooms,
+			unsubscribePublicRooms,
 		}),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[ws, wsStatus, playerId, identity, bindings, room, chat, lastError],
+		[ws, wsStatus, playerId, identity, bindings, targetFps, room, chat, lastError, publicRooms],
 	);
 
 	return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;

@@ -22,9 +22,14 @@ export type ServerHello = { type: "pong"; ts: number; serverTs: number };
 
 export type CreateRoom = {
 	type: "create_room";
-	name: string;
+	name: string;       // player name
 	color: RGB;
 	mapId: string;
+	// Room-level metadata. Every room has a display name + max-player cap
+	// regardless of visibility — `public` is just an observability toggle.
+	displayName: string;
+	maxPlayers: number; // -1 means unlimited; otherwise an integer >= 2
+	public: boolean;    // listed on the homepage when true
 };
 
 export type JoinRoom = {
@@ -57,6 +62,9 @@ export type RoomState = {
 	hostId: string;
 	players: PlayerInfo[];
 	started: boolean;
+	displayName: string;
+	maxPlayers: number; // -1 = unlimited (mirrors CreateRoom.maxPlayers)
+	public: boolean;
 };
 
 export type PlayerJoined = { type: "player_joined"; player: PlayerInfo };
@@ -73,6 +81,36 @@ export type ChatMsg = {
 	color: RGB;
 	text: string;
 	ts: number;
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// Public lobbies (homepage discovery)
+// ──────────────────────────────────────────────────────────────────────
+
+// Host-only: flip a room's public/private flag mid-session.
+export type SetRoomVisibility = {
+	type: "set_room_visibility";
+	public: boolean;
+};
+
+// Homepage subscribes while it's mounted; the server pushes a fresh
+// PublicRoomsList immediately and again whenever a public room is
+// created / joined / left / started / made-private / GC'd.
+export type SubscribePublicRooms = { type: "subscribe_public_rooms" };
+export type UnsubscribePublicRooms = { type: "unsubscribe_public_rooms" };
+
+export type PublicRoomSummary = {
+	code: string;
+	displayName: string;
+	mapId: string;
+	playerCount: number;
+	maxPlayers: number;
+	started: boolean;
+};
+
+export type PublicRoomsList = {
+	type: "public_rooms_list";
+	rooms: PublicRoomSummary[];
 };
 
 // ──────────────────────────────────────────────────────────────────────
@@ -152,7 +190,10 @@ export type ClientMsg =
 	| StartGame
 	| ChatSend
 	| SnapshotIn
-	| TpRequest;
+	| TpRequest
+	| SetRoomVisibility
+	| SubscribePublicRooms
+	| UnsubscribePublicRooms;
 
 // Sent once per connection right after WS open so the client knows its
 // server-assigned id (used to recognise itself in subsequent room_state
@@ -168,6 +209,7 @@ export type ErrorMsg = {
 		| "room_already_started"
 		| "not_in_room"
 		| "not_host"
+		| "room_full"
 		| "validation";
 	message: string;
 };
@@ -182,4 +224,5 @@ export type ServerMsg =
 	| ChatMsg
 	| SnapshotOut
 	| TpRelay
+	| PublicRoomsList
 	| ErrorMsg;

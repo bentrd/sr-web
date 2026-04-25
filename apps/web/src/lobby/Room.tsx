@@ -114,6 +114,11 @@ export function Room(): JSX.Element {
 		navigate("/");
 	}
 
+	function handleToggleVisibility(): void {
+		if (!room) return;
+		ws.send({ type: "set_room_visibility", public: !room.public });
+	}
+
 	function handleStart(): void {
 		ws.send({ type: "start_game" });
 		// When `room_state.started` flips true, the App router will
@@ -124,14 +129,33 @@ export function Room(): JSX.Element {
 		<main className="lobby">
 			<header className="room-header">
 				<div>
-					<div className="room-code-label">Room code</div>
-					<div className="room-code">{room.code}</div>
+					<div className="room-code-label">Lobby</div>
+					<div className="room-display-name">{room.displayName}</div>
+					<div className="room-code-sub">
+						code <span className="room-code-inline">{room.code}</span>
+					</div>
 				</div>
 				<div className="room-map">
 					<div className="room-code-label">Map</div>
 					<div>{map?.displayName ?? room.mapId}</div>
 				</div>
+				<div className="room-map">
+					<div className="room-code-label">Capacity</div>
+					<div>
+						{room.players.length}/
+						{room.maxPlayers === -1 ? "∞" : room.maxPlayers}
+					</div>
+				</div>
 				<div className="room-actions">
+					{isHost && (
+						<button
+							type="button"
+							className={room.public ? "visibility-public" : "visibility-private"}
+							onClick={handleToggleVisibility}
+						>
+							{room.public ? "Public · click to make private" : "Private · click to make public"}
+						</button>
+					)}
 					<button type="button" onClick={handleCopyLink}>
 						{copyState === "copied" ? "Copied!" : "Copy invite link"}
 					</button>

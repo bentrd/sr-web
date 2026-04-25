@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useApp } from "../state/AppState";
+import { FPS_MAX, FPS_MIN, useApp } from "../state/AppState";
 import {
 	ACTIONS,
 	ACTION_LABELS,
@@ -14,7 +14,7 @@ interface ControlsModalProps {
 }
 
 export function ControlsModal({ open, onClose }: ControlsModalProps): JSX.Element | null {
-	const { bindings, setBindings } = useApp();
+	const { bindings, setBindings, targetFps, setTargetFps } = useApp();
 	const [capturing, setCapturing] = useState<Action | null>(null);
 
 	// While capturing a rebind, swallow the next keydown and assign it.
@@ -95,6 +95,23 @@ export function ControlsModal({ open, onClose }: ControlsModalProps): JSX.Elemen
 						))}
 					</tbody>
 				</table>
+
+				<div className="fps-row">
+					<label className="bindings-label" htmlFor="fps-slider">
+						Render FPS
+					</label>
+					<input
+						id="fps-slider"
+						type="range"
+						min={FPS_MIN}
+						max={FPS_MAX}
+						step={5}
+						value={targetFps}
+						onChange={(e) => setTargetFps(Number(e.target.value))}
+					/>
+					<span className="fps-value">{targetFps}</span>
+				</div>
+
 				<footer className="modal-footer">
 					<button type="button" onClick={onClose}>
 						Done
