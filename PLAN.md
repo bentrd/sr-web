@@ -200,9 +200,10 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 - [x] Error states: server unreachable, room not found, WASM load failure (Game.tsx try/catch + Room.tsx `lastError` + WsClient `closed` status renders in the footer)
 - [x] Reconnect UX: WsClient already has exponential-backoff auto-reconnect; the "server: closed" footer surfaces it
 - [x] Deploy artifacts: `apps/server/Dockerfile` + `apps/server/fly.toml` for Fly.io. Static frontend just needs `VITE_WS_URL=wss://...` baked in at build time and any host that serves `application/wasm` (Vercel/Cloudflare both do).
-- [ ] **Actual deploy** (one-time, manual): `fly deploy --config apps/server/fly.toml` then point a Vercel project at `apps/web` with `VITE_WS_URL` set
+- [x] **Frontend deploy**: `bash scripts/deploy-pages.sh` publishes to `gh-pages` branch → https://bentrd.github.io/sr-web/
+- [ ] **Server deploy** (one-time, manual): `flyctl auth login && cd apps/server && fly launch --no-deploy --copy-config --name sr-web-server && fly deploy --remote-only` (requires user's Fly.io credentials)
 - [x] Update README with run + deploy instructions
-- [ ] **Exit gate**: shareable URL works end-to-end with a friend on a different network (blocked on the manual deploy above — code is ready)
+- [ ] **Exit gate**: shareable URL works end-to-end with a friend on a different network (blocked on the server deploy above — frontend is live and the WS URL is already wired to `wss://sr-web-server.fly.dev/ws`)
 
 ---
 
