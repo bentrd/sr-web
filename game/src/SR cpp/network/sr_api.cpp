@@ -22,6 +22,19 @@ namespace
 {
 	instance* g_inst = nullptr;
 
+	// Single-slot save state used by the F5 / F9 quick-save / quick-load
+	// keybinds. Captures just enough to make practice runs useful: the
+	// position and velocity restore the trajectory; boost restores the
+	// charge so the player can keep using their stockpile after a load.
+	struct local_save_state
+	{
+		bool valid = false;
+		emu::vector position{ 0, 0 };
+		emu::vector velocity{ 0, 0 };
+		float boost = 0.0f;
+	};
+	local_save_state g_save_state;
+
 	// Snapshot wire layout (bytes). Mirrored on the JS side in
 	// packages/protocol. Bumping PROTOCOL_VERSION there must be paired
 	// with a layout change here.
@@ -277,6 +290,44 @@ extern "C"
 		if (size < 1.0f) size = 1.0f;
 		if (size > 64.0f) size = 64.0f;
 		draw::visuals().grapple_head_size = size;
+	}
+	void sr_set_visual_boost_section(float r, float g, float b, float a)
+	{
+		auto& v = draw::visuals();
+		v.boost_section_r = r; v.boost_section_g = g; v.boost_section_b = b; v.boost_section_a = a;
+	}
+	void sr_set_visual_boost_pickup(float r, float g, float b, float a)
+	{
+		auto& v = draw::visuals();
+		v.boost_pickup_r = r; v.boost_pickup_g = g; v.boost_pickup_b = b; v.boost_pickup_a = a;
+	}
+
+	// Quick-save the local player's pose so the JS side can later
+	// quick-load it. Captures position + velocity + boost charge — enough
+	// for speedrun practice without smashing other simulation state.
+	void sr_save_state()
+	{
+		if (g_inst == nullptr) return;
+		emu::player* p = g_inst->m_playground.m_player;
+		if (p == nullptr || p->m_actor == nullptr) return;
+		g_save_state.valid = true;
+		g_save_state.position = p->m_actor->d.position;
+		g_save_state.velocity = p->m_actor->d.velocity;
+		g_save_state.boost = p->d.boost;
+	}
+
+	// Restore whatever sr_save_state captured. Returns 0 if there's no
+	// save yet (so the JS side can decide whether to show a hint).
+	int sr_load_state()
+	{
+		if (g_inst == nullptr) return 0;
+		if (!g_save_state.valid) return 0;
+		emu::player* p = g_inst->m_playground.m_player;
+		if (p == nullptr || p->m_actor == nullptr) return 0;
+		p->set_position(g_save_state.position);
+		p->m_actor->d.velocity = g_save_state.velocity;
+		p->d.boost = g_save_state.boost;
+		return 1;
 	}
 
 	// Configure the WASM main loop's frame pacing.

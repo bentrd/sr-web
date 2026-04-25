@@ -3,6 +3,11 @@
 // (sr_set_visual_*); the OptionsModal converts to/from #rrggbb hex.
 
 export type ColorRgb = readonly [number, number, number];
+export type ColorRgba = readonly [number, number, number, number];
+
+// Speedometer overlay mode. 'off' hides it entirely, 'local' shows it
+// only above the local player, 'all' shows it for ghosts as well.
+export type SpeedometerMode = "off" | "local" | "all";
 
 export interface Visuals {
 	bg: ColorRgb;
@@ -12,6 +17,9 @@ export interface Visuals {
 	grappleCord: ColorRgb;
 	grappleHead: ColorRgb;
 	grappleHeadSize: number;
+	boostSection: ColorRgba;
+	boostPickup: ColorRgba;
+	speedometer: SpeedometerMode;
 }
 
 export const VISUAL_DEFAULTS: Visuals = {
@@ -22,6 +30,9 @@ export const VISUAL_DEFAULTS: Visuals = {
 	grappleCord: [0, 0, 0],
 	grappleHead: [1, 0, 0],
 	grappleHeadSize: 12,
+	boostSection: [0, 1, 0, 1],
+	boostPickup: [0, 1, 0, 0.1],
+	speedometer: "local",
 };
 
 export const HEAD_SIZE_MIN = 1;
@@ -35,6 +46,18 @@ function isColor(v: unknown): v is ColorRgb {
 		v.length === 3 &&
 		v.every((c) => typeof c === "number" && Number.isFinite(c) && c >= 0 && c <= 1)
 	);
+}
+
+function isColorA(v: unknown): v is ColorRgba {
+	return (
+		Array.isArray(v) &&
+		v.length === 4 &&
+		v.every((c) => typeof c === "number" && Number.isFinite(c) && c >= 0 && c <= 1)
+	);
+}
+
+function isSpeedometerMode(v: unknown): v is SpeedometerMode {
+	return v === "off" || v === "local" || v === "all";
 }
 
 function clampSize(n: number): number {
@@ -57,6 +80,9 @@ export function loadVisuals(): Visuals {
 			grappleHeadSize: clampSize(
 				typeof parsed.grappleHeadSize === "number" ? parsed.grappleHeadSize : VISUAL_DEFAULTS.grappleHeadSize,
 			),
+			boostSection: isColorA(parsed.boostSection) ? parsed.boostSection : VISUAL_DEFAULTS.boostSection,
+			boostPickup: isColorA(parsed.boostPickup) ? parsed.boostPickup : VISUAL_DEFAULTS.boostPickup,
+			speedometer: isSpeedometerMode(parsed.speedometer) ? parsed.speedometer : VISUAL_DEFAULTS.speedometer,
 		};
 	} catch {
 		return VISUAL_DEFAULTS;
@@ -87,4 +113,16 @@ export function hexToColor(hex: string): ColorRgb {
 	const g = parseInt(v.slice(2, 4), 16) / 255;
 	const b = parseInt(v.slice(4, 6), 16) / 255;
 	return [r, g, b];
+}
+
+// Color thresholds for the speedometer label. Bands are inclusive on the
+// lower bound. Below 750 falls through to a muted neutral so low speeds
+// don't draw attention.
+export function speedColor(s: number): string {
+	if (s >= 1400) return "oklch(0.40 0.14 20)";
+	if (s >= 1300) return "oklch(0.55 0.18 25)";
+	if (s >= 1200) return "oklch(0.65 0.16 45)";
+	if (s >= 900) return "oklch(0.75 0.14 85)";
+	if (s >= 750) return "oklch(0.68 0.14 145)";
+	return "oklch(0.78 0.02 250)";
 }

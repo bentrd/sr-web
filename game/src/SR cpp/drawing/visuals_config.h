@@ -30,6 +30,13 @@ namespace draw
 		// (default 12x12 mirrors the actor's collision box).
 		float grapple_head_r = 1.0f, grapple_head_g = 0.0f, grapple_head_b = 0.0f;
 		float grapple_head_size = 12.0f;
+
+		// Boost strip (boost_section actor) — solid green by default.
+		float boost_section_r = 0.0f, boost_section_g = 1.0f, boost_section_b = 0.0f, boost_section_a = 1.0f;
+
+		// Super-boost tinted volume (super_boost_volume actor) — 10% green
+		// so it tints without obscuring the underlying tiles.
+		float boost_pickup_r = 0.0f, boost_pickup_g = 1.0f, boost_pickup_b = 0.0f, boost_pickup_a = 0.1f;
 	};
 
 	// Single mutable instance owned by the renderer. Returned by reference

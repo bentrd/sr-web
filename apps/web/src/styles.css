@@ -351,6 +351,23 @@ button.primary {
 	pointer-events: none;
 }
 
+.speed-label {
+	position: absolute;
+	top: 0;
+	left: 0;
+	padding: 0 0.3rem;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.85rem;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	background: rgba(0, 0, 0, 0.55);
+	border-radius: 0.25rem;
+	white-space: nowrap;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+	will-change: transform, color;
+	pointer-events: none;
+}
+
 .game-status {
 	position: absolute;
 	inset: 0;
@@ -388,7 +405,91 @@ button.primary {
 }
 
 .modal-wide {
-	width: min(34rem, 100%);
+	width: min(44rem, 100%);
+}
+
+.visual-grid {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 0.55rem;
+}
+
+@media (min-width: 32rem) {
+	.visual-grid {
+		grid-template-columns: 1fr 1fr;
+	}
+}
+
+.visual-row {
+	display: grid;
+	grid-template-columns: 1fr auto auto;
+	align-items: center;
+	gap: 0.55rem;
+	padding: 0.4rem 0.55rem;
+	border: 1px solid var(--border);
+	border-radius: 0.5rem;
+	background: var(--panel-2);
+}
+
+.visual-row-label {
+	min-width: 0;
+}
+
+.visual-row-label > div:first-child {
+	font-size: 0.85rem;
+	font-weight: 500;
+	color: var(--text);
+}
+
+.visual-alpha {
+	width: 4rem;
+	accent-color: var(--accent);
+}
+
+.visual-section {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem;
+	padding-top: 0.25rem;
+	border-top: 1px solid var(--border);
+}
+
+.seg-toggle {
+	display: inline-flex;
+	height: 2rem;
+	overflow: hidden;
+	border: 1px solid var(--border);
+	border-radius: 0.4rem;
+	background: var(--panel-2);
+}
+
+.seg-toggle-btn {
+	padding: 0 0.7rem;
+	border: none;
+	background: transparent;
+	color: var(--muted);
+	font-size: 0.8rem;
+	font-weight: 500;
+	cursor: pointer;
+	border-radius: 0;
+}
+
+.seg-toggle-btn + .seg-toggle-btn {
+	border-left: 1px solid var(--border);
+}
+
+.seg-toggle-btn:hover {
+	color: var(--text);
+}
+
+.seg-toggle-active {
+	background: var(--accent);
+	color: #1a1a1a;
+}
+
+.seg-toggle-active:hover {
+	color: #1a1a1a;
 }
 
 @keyframes sr-pulse-ring {

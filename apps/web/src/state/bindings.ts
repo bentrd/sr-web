@@ -23,7 +23,7 @@ export const GAME_ACTIONS = [
 ] as const;
 
 // UI actions are handled in JS only (never pushed to WASM).
-export const UI_ACTIONS = ["chat", "reset"] as const;
+export const UI_ACTIONS = ["chat", "reset", "save_state", "load_state"] as const;
 
 export const ACTIONS = [...GAME_ACTIONS, ...UI_ACTIONS] as const;
 export type Action = typeof ACTIONS[number];
@@ -40,8 +40,10 @@ export const DEFAULT_BINDINGS: Bindings = {
 	boost:   { code: 340, label: "Shift" }, // GLFW_KEY_LEFT_SHIFT
 	item:    { code: 69,  label: "E" },     // GLFW_KEY_E
 	swap:    { code: 70,  label: "F" },     // GLFW_KEY_F
-	chat:    { code: 257, label: "Enter" }, // GLFW_KEY_ENTER (UI-only)
-	reset:   { code: 82,  label: "R" },     // GLFW_KEY_R       (UI-only)
+	chat:        { code: 257, label: "Enter" }, // GLFW_KEY_ENTER (UI-only)
+	reset:       { code: 82,  label: "R" },     // GLFW_KEY_R       (UI-only)
+	save_state:  { code: 294, label: "F5" },    // GLFW_KEY_F5      (UI-only)
+	load_state:  { code: 298, label: "F9" },    // GLFW_KEY_F9      (UI-only)
 };
 
 const STORAGE_KEY = "sr-web.bindings";
@@ -195,6 +197,8 @@ export const ACTION_LABELS: Readonly<Record<Action, string>> = {
 	swap: "Swap item",
 	chat: "Open chat",
 	reset: "Reset to start",
+	save_state: "Save state",
+	load_state: "Load state",
 };
 
 // Custom DOM event used to ask the active ChatPanel to focus its input

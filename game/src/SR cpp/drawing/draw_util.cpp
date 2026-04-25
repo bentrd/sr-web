@@ -483,19 +483,21 @@ void draw::draw_player_start(player_start* player_start, const camera& camera)
 
 void draw::draw_super_boost_volume(super_boost_volume* super_boost_volume, const camera& camera)
 {
-	// Render at low alpha — these volumes are huge and an opaque green
-	// fill drowns the rest of the level. 10% reads as a tinted region
-	// without obscuring the geometry behind it.
+	// User-tunable through visuals_config (boost_pickup_*). Defaults to
+	// the original 10%-alpha green tint so an untouched client looks the
+	// same as before.
+	const auto& v = draw::visuals();
 	draw::draw_rectangle_a(
-		0.0f, 1.0f, 0.0f, 0.1f,
+		v.boost_pickup_r, v.boost_pickup_g, v.boost_pickup_b, v.boost_pickup_a,
 		super_boost_volume->m_actor->m_bounds.get_vertex(0) - camera.position,
 		super_boost_volume->m_actor->m_bounds.get_vertex(2) - camera.position);
 }
 
 void draw::draw_boost_section(boost_section* boost_section, const camera& camera)
 {
-	draw::draw_rectangle(
-		0.0f, 1.0f, 0.0f,
+	const auto& v = draw::visuals();
+	draw::draw_rectangle_a(
+		v.boost_section_r, v.boost_section_g, v.boost_section_b, v.boost_section_a,
 		boost_section->m_actor->m_bounds.get_vertex(0) - camera.position,
 		boost_section->m_actor->m_bounds.get_vertex(2) - camera.position);
 }

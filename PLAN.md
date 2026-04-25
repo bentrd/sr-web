@@ -263,6 +263,17 @@ When picking up a task: tick the box in a commit *before* starting (claim it), o
 - [x] `Room.tsx` adds an Options button next to the Controls button in the game-bar
 - [x] **Exit gate**: WASM rebuild succeeds (sr.js / sr.wasm have all 7 visual exports); typecheck + prod build green. Live-toggle visual confirmation deferred to next browser run.
 
+### 8d. Quicksave + boost colors + speedometer
+
+- [x] C++: `local_save_state` in `network/sr_api.cpp` captures position / velocity / boost; `sr_save_state` + `sr_load_state` ABI exports
+- [x] C++: `boost_section_{rgba}` + `boost_pickup_{rgba}` in `visuals_config.h`; `draw_super_boost_volume` + `draw_boost_section` use `draw_rectangle_a` with config alpha
+- [x] C++: `sr_set_visual_boost_section(r,g,b,a)` + `sr_set_visual_boost_pickup(r,g,b,a)` ABI exports; both added to `EXPORTED_FUNCTIONS`
+- [x] JS bindings: `save_state` (F5) + `load_state` (F9) added to `UI_ACTIONS` / `DEFAULT_BINDINGS` / `ACTION_LABELS`
+- [x] JS visuals: `ColorRgba` + `SpeedometerMode` types; `boostSection` / `boostPickup` / `speedometer` in `Visuals` + `VISUAL_DEFAULTS`; `speedColor(s)` returns oklch threshold colors at 1400/1300/1200/900/750
+- [x] `OptionsModal`: 2-column grid for color rows (RGB single col, RGBA col + alpha slider); 3-way segmented Speedometer toggle (Off/Self/All)
+- [x] `Game.tsx`: cwraps `setVisualBoostSection` / `setVisualBoostPickup` / `saveState` / `loadState`; combined capture-phase keydown handler (reset + save + load); per-frame computes local + ghost speeds and renders `√(vx²+vy²)` overlay above each player
+- [x] **Exit gate**: WASM rebuild succeeds (4 new exports verified in sr.js); typecheck + prod build green. Live keybind + speedometer confirmation deferred to next browser run.
+
 ---
 
 ## Non-goals
