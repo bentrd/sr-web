@@ -330,6 +330,13 @@ void draw::draw_line(float r, float g, float b, vector p1, vector p2)
 
 void draw::draw_tile(emu::tile_id tile, vector pos)
 {
+	// Color palette: solid tiles render as a medium gray on the dark
+	// background, with white stripes for "special" surfaces (grappable
+	// ceilings, climbable walls). Keeping the body slightly darker than
+	// the stripes ensures the affordance stays readable.
+	constexpr float body_r = 0.62f, body_g = 0.64f, body_b = 0.68f;
+	constexpr float stripe_r = 1.0f, stripe_g = 1.0f, stripe_b = 1.0f;
+
 	switch (tile)
 	{
 	case tile_air:
@@ -337,57 +344,57 @@ void draw::draw_tile(emu::tile_id tile, vector pos)
 	case tile_square:
 	case tile_checkered:
 		draw_rectangle(
-			0.0f, 0.0f, 0.0f,
+			body_r, body_g, body_b,
 			pos, pos + vector{ 16.0f, 16.0f });
 		break;
 	case tile_grapple_ceil:
 		draw_rectangle(
-			0.0f, 0.0f, 0.0f,
+			body_r, body_g, body_b,
 			pos, pos + vector{ 16.0f, 16.0f });
 		draw_rectangle(
-			0.0f, 0.0f, 1.0f,
+			stripe_r, stripe_g, stripe_b,
 			pos + vector{ 0.0f, 13.0f }, pos + vector{ 16.0f, 16.0f });
 		break;
 	case tile_wall_right:
 		draw_rectangle(
-			0.0f, 0.0f, 0.0f,
+			body_r, body_g, body_b,
 			pos, pos + vector{ 16.0f, 16.0f });
 		draw_rectangle(
-			0.0f, 1.0f, 0.0f,
+			stripe_r, stripe_g, stripe_b,
 			pos + vector{ 13.0f, 0.0f }, pos + vector{ 16.0f, 16.0f });
 		break;
 	case tile_wall_left:
 		draw_rectangle(
-			0.0f, 0.0f, 0.0f,
+			body_r, body_g, body_b,
 			pos, pos + vector{ 16.0f, 16.0f });
 		draw_rectangle(
-			0.0f, 1.0f, 0.0f,
+			stripe_r, stripe_g, stripe_b,
 			pos, pos + vector{ 3.0f, 16.0f });
 		break;
 	case tile_slope_floor_left:
 	case tile_stairs_left:
 	case tile_checkered_slope_floor_left:
 		draw_triangle(
-			0.0f, 0.0f, 0.0f,
+			body_r, body_g, body_b,
 			pos, pos + vector{ 0.0f, 16.0f }, pos + vector{ 16.0f, 16.0f });
 		break;
 	case tile_slope_floor_right:
 	case tile_stairs_right:
 	case tile_checkered_slope_floor_right:
 		draw_triangle(
-			0.0f, 0.0f, 0.0f,
+			body_r, body_g, body_b,
 			pos + vector{ 16.0f, 0.0f }, pos + vector{ 16.0f, 16.0f }, pos + vector{ 0.0f, 16.0f });
 		break;
 	case tile_slope_ceil_left:
 	case tile_checkered_slope_ceil_left:
 		draw_triangle(
-			0.0f, 0.0f, 0.0f,
+			body_r, body_g, body_b,
 			pos, pos + vector{ 16.0f, 0.0f }, pos + vector{ 0.0f, 16.0f });
 		break;
 	case tile_slope_ceil_right:
 	case tile_checkered_slope_ceil_right:
 		draw_triangle(
-			0.0f, 0.0f, 0.0f,
+			body_r, body_g, body_b,
 			pos, pos + vector{ 16.0f, 0.0f }, pos + vector{ 16.0f, 16.0f });
 		break;
 	case tile_count:

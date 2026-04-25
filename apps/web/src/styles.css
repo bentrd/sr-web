@@ -163,6 +163,11 @@ button.primary {
 	border-radius: 0.75rem;
 }
 
+.room-actions {
+	display: flex;
+	gap: 0.5rem;
+}
+
 .room-code-label {
 	font-size: 0.7rem;
 	color: var(--muted);
@@ -294,7 +299,7 @@ button.primary {
 	border: 1px solid var(--border);
 	border-radius: 0.5rem;
 	overflow: hidden;
-	background: #fff;
+	background: #292B33;
 }
 
 .game-canvas {

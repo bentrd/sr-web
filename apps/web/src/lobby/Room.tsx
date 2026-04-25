@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useApp } from "../state/AppState";
 import { Game } from "../game/Game";
-import { rgbToCss } from "./color";
+import { hexToRgb, rgbToCss, rgbToHex } from "./color";
 import { MAPS } from "./maps";
 import { ControlsModal } from "./ControlsModal";
 import { ChatPanel } from "./ChatPanel";
@@ -12,9 +12,10 @@ const SOFT_CAP_WARNING = 12;
 export function Room(): JSX.Element {
 	const { code: urlCode } = useParams<{ code: string }>();
 	const navigate = useNavigate();
-	const { ws, wsStatus, playerId, identity, room, lastError, leaveRoom } =
+	const { ws, wsStatus, playerId, identity, setIdentity, room, lastError, leaveRoom } =
 		useApp();
 	const [controlsOpen, setControlsOpen] = useState(false);
+	const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
 	// If we land directly on /r/CODE without an active room state for that
 	// code (e.g. shared link, page refresh, WS reconnect), auto-join.
@@ -31,7 +32,9 @@ export function Room(): JSX.Element {
 		const code = urlCode.toUpperCase();
 		if (room?.code === code) return;
 		if (!identity.name.trim()) {
-			navigate("/", { replace: true });
+			// Don't bounce to "/" — render an inline join form below so the
+			// shared URL stays stable and the new player goes straight in
+			// after entering a name.
 			return;
 		}
 		// Avoid spamming join_room within the same WS session.
@@ -45,6 +48,12 @@ export function Room(): JSX.Element {
 		});
 	}, [urlCode, wsStatus.kind, room?.code, identity, ws, navigate]);
 
+	// Visitor opened a shared invite link without a stored identity — collect
+	// just the name (color defaults to a random saturated hue, can be tweaked).
+	if (urlCode && !identity.name.trim()) {
+		return <JoinViaLink code={urlCode.toUpperCase()} />;
+	}
+
 	if (!room || (urlCode && room.code !== urlCode.toUpperCase())) {
 		return (
 			<main className="lobby">
@@ -55,6 +64,17 @@ export function Room(): JSX.Element {
 				</button>
 			</main>
 		);
+	}
+
+	async function handleCopyLink(): Promise<void> {
+		const url = `${window.location.origin}/r/${room?.code ?? ""}`;
+		try {
+			await navigator.clipboard.writeText(url);
+			setCopyState("copied");
+			window.setTimeout(() => setCopyState("idle"), 1500);
+		} catch {
+			// Clipboard can fail in insecure contexts — silently no-op.
+		}
 	}
 
 	// Once the host starts, swap to the game view. The lobby chrome
@@ -106,9 +126,14 @@ export function Room(): JSX.Element {
 					<div className="room-code-label">Map</div>
 					<div>{map?.displayName ?? room.mapId}</div>
 				</div>
-				<button type="button" onClick={handleLeave}>
-					Leave
-				</button>
+				<div className="room-actions">
+					<button type="button" onClick={handleCopyLink}>
+						{copyState === "copied" ? "Copied!" : "Copy invite link"}
+					</button>
+					<button type="button" onClick={handleLeave}>
+						Leave
+					</button>
+				</div>
 			</header>
 
 			<section className="card">
@@ -169,6 +194,68 @@ export function Room(): JSX.Element {
 			</footer>
 			<ChatPanel variant="lobby" />
 			<ControlsModal open={controlsOpen} onClose={() => setControlsOpen(false)} />
+		</main>
+	);
+}
+
+// Inline name+color form rendered when a visitor opens a shared invite link
+// (/r/CODE) without a stored identity. Submitting commits the identity to
+// AppState, which re-runs Room's join effect and slots them straight into the
+// room — no detour through the lobby home.
+function JoinViaLink({ code }: { code: string }): JSX.Element {
+	const { identity, setIdentity, wsStatus, lastError } = useApp();
+	const [name, setName] = useState<string>("");
+
+	function handleSubmit(e: FormEvent): void {
+		e.preventDefault();
+		const trimmed = name.trim();
+		if (!trimmed || wsStatus.kind !== "open") return;
+		setIdentity({ ...identity, name: trimmed });
+	}
+
+	return (
+		<main className="lobby">
+			<h1>Join room {code}</h1>
+			<p className="subtitle">Pick a name and color, then jump in.</p>
+			<form className="card" onSubmit={handleSubmit}>
+				<div className="field-row">
+					<label className="field">
+						<span>Name</span>
+						<input
+							type="text"
+							maxLength={24}
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							placeholder="anonymous_runner"
+							autoFocus
+						/>
+					</label>
+					<label className="field field-color">
+						<span>Color</span>
+						<input
+							type="color"
+							value={rgbToHex(identity.color)}
+							onChange={(e) => setIdentity({ ...identity, color: hexToRgb(e.target.value) })}
+						/>
+					</label>
+				</div>
+				<button
+					type="submit"
+					className="primary"
+					disabled={!name.trim() || wsStatus.kind !== "open"}
+				>
+					Join
+				</button>
+			</form>
+			{lastError && (
+				<div className="error" role="alert">
+					{lastError.message}
+				</div>
+			)}
+			<footer className="status">
+				server: {wsStatus.kind}
+				{wsStatus.kind === "closed" && ` — ${wsStatus.reason}`}
+			</footer>
 		</main>
 	);
 }

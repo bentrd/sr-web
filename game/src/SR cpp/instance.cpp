@@ -203,7 +203,10 @@ void instance::enable_drawing(bool enable)
 #endif
 		draw::init();
 		draw::set_viewport((int)window_width, (int)window_height);
-		glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+		// Dark gray play-area background — matches the lobby UI palette so
+		// the canvas reads as part of the same app, and gives the white
+		// stripes on grapple/wall tiles room to pop.
+		glClearColor(0.16f, 0.17f, 0.20f, 1.0f);
 
 		m_input_handler.init_callbacks(m_win);
 	}
