@@ -141,7 +141,7 @@ void collision_utils::assign_collision_shape(std::unique_ptr<i_collision_shape>&
 
 	if (left == nullptr)
 	{
-		left = ::clone<i_collision_shape>(right);
+		left = emu::clone<i_collision_shape>(right);
 		return;
 	}
 
@@ -149,7 +149,7 @@ void collision_utils::assign_collision_shape(std::unique_ptr<i_collision_shape>&
 	int32_t shape_right = right->get_id();
 
 	if (shape_left != shape_right)
-		left = ::clone<i_collision_shape>(right);
+		left = emu::clone<i_collision_shape>(right);
 	else
 	{
 		if (shape_left == shape_aabb)

@@ -39,7 +39,7 @@ collision_engine::collision_engine(const collision_engine& right) :
 
 	for (const auto& actor : right.m_actors)
 	{
-		::actor* new_actor = m_actors.emplace_back(::clone<::actor>(actor.get())).get();
+		::actor* new_actor = m_actors.emplace_back(emu::clone<::actor>(actor.get())).get();
 		leaf_map.emplace(actor.get(), new_actor);
 		contr_map.emplace(actor->m_controller.get(), new_actor->m_controller.get());
 		if (new_actor->d.automatic_collision_detection)
@@ -97,7 +97,7 @@ collision_engine& collision_engine::operator=(const collision_engine& right)
 	{
 		for (; it_r != right.m_actors.end(); ++it_r)
 		{
-			actor* new_actor = m_actors.emplace_back(::clone<actor>(it_r->get())).get();
+			actor* new_actor = m_actors.emplace_back(emu::clone<actor>(it_r->get())).get();
 			leaf_map.emplace(it_r->get(), new_actor);
 			contr_map.emplace((*it_r)->m_controller.get(), new_actor->m_controller.get());
 			if (new_actor->d.automatic_collision_detection)

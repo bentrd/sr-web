@@ -5,7 +5,6 @@ bun.lockb
 # Build outputs
 dist
 build
-build-*
 game/build-*
 *.tsbuildinfo
 

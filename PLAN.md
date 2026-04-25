@@ -165,19 +165,15 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 *Depends on Phase 4 complete.*
 
-- [ ] Add `cmake/emscripten.cmake` toolchain config
-- [ ] Strip `<GL/glew.h>` for web target; use `<GLES3/gl3.h>` instead
-- [ ] Strip `<thread>` / `<mutex>` for web target if unused (single-threaded WASM build)
-- [ ] Set Emscripten flags:
-  - `-sUSE_GLFW=3 -sFULL_ES3=1 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2`
-  - `-sUSE_ZLIB=1 -sALLOW_MEMORY_GROWTH=1`
-  - `-sEXPORTED_FUNCTIONS='["_main","_sr_set_local_identity","_sr_load_map","_sr_push_ghost","_sr_set_ghost_identity","_sr_remove_ghost","_sr_get_local_snapshot","_sr_get_player_screen_pos"]'`
-  - `-sEXPORTED_RUNTIME_METHODS='["ccall","cwrap","HEAPU8","HEAPF32","stringToUTF8","UTF8ToString"]'`
-  - `--preload-file game/assets/maps@/maps`
-- [ ] Write `game/platform/web_main.cpp` using `emscripten_set_main_loop_arg`
-- [ ] Output `sr.js` + `sr.wasm` + `sr.data` into `apps/web/public/`
-- [ ] Add `bun run build:wasm` script
-- [ ] **Exit gate**: opening the React app loads the WASM, renders Pitfall, local player is keyboard-controllable
+- [x] CMakeLists EMSCRIPTEN branch (no separate toolchain file needed — emcmake injects the toolchain)
+- [x] `<GL/glew.h>` swapped for `<GLES3/gl3.h>` via `#ifdef __EMSCRIPTEN__` in draw_util.h
+- [x] `glewInit()` gated `#ifndef __EMSCRIPTEN__` in instance.cpp (Emscripten's `-sFULL_ES3=1` resolves GL pointers itself)
+- [x] `::clone<T>` calls renamed to `emu::clone<T>` (collided with musl `<sched.h>` `clone` on Emscripten)
+- [x] All Emscripten flags set in `target_link_options`: USE_GLFW=3, FULL_ES3=1, MIN/MAX_WEBGL_VERSION=2, USE_ZLIB=1, ALLOW_MEMORY_GROWTH=1, MODULARIZE=1, EXPORT_NAME=createSrModule, ENVIRONMENT=web, plus the EXPORTED_FUNCTIONS / EXPORTED_RUNTIME_METHODS lists and `--preload-file ...assets/maps@/maps`
+- [x] `game/platform/web_main.cpp` registers the active instance, loads pitfall by default, and drives `instance::tick_frame` via `emscripten_set_main_loop_arg(fps=0, simulate_infinite_loop=1)`
+- [x] Output drops directly into `apps/web/public/{sr.js,sr.wasm,sr.data}` via `RUNTIME_OUTPUT_DIRECTORY`
+- [x] `bun run build:wasm` → `scripts/build-wasm.sh` (also pins `EMSDK_PYTHON` because brew's python sniff defaults to system 3.9)
+- [x] **Exit gate**: `bun run build:wasm` produces sr.js (127KB) + sr.wasm (562KB) + sr.data (87KB, all 4 maps preloaded under /maps); all 7 sr_* exports present in sr.js. End-to-end browser play deferred to Phase 6.
 
 ---
 

@@ -196,7 +196,7 @@ void tile_layer_base::get_tile_actors_at(const aabb& aabb_query, collision_filte
 				const std::unique_ptr<emu::tile_actor>& tile_actor_template = all_tiles[tile];
 
 				if (tile_actor == nullptr)
-					tile_actor = ::clone<emu::tile_actor>(tile_actor_template.get());
+					tile_actor = emu::clone<emu::tile_actor>(tile_actor_template.get());
 				else
 					tile_actor->set(*tile_actor_template);
 

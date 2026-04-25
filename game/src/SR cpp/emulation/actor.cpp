@@ -16,7 +16,7 @@ actor::actor(state* state, int32_t id, vector position, vector size) :
 
 actor::actor(const actor& right) :
 	d{ right.d },
-	m_controller{ ::clone<i_actor_controller>(right.m_controller.get()) },
+	m_controller{ emu::clone<i_actor_controller>(right.m_controller.get()) },
 	m_state{ right.m_state },
 	m_bounds{ right.m_bounds },
 	m_quad_tree_parent{ right.m_quad_tree_parent }
@@ -29,7 +29,7 @@ actor& actor::operator=(const actor& right)
 	d = right.d;
 	if (!m_controller->set(right.m_controller.get()))
 	{
-		m_controller = ::clone<i_actor_controller>(right.m_controller.get());
+		m_controller = emu::clone<i_actor_controller>(right.m_controller.get());
 	}
 	m_controller->set_actor(this);
 	m_state = right.m_state;
