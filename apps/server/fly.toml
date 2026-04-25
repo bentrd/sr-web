@@ -1,0 +1,33 @@
+# Fly.io config for the snapshot-relay server.
+# Deploy from the repo root:
+#   fly launch --config apps/server/fly.toml --dockerfile apps/server/Dockerfile
+#   fly deploy --config apps/server/fly.toml --dockerfile apps/server/Dockerfile
+
+app = "sr-web-server"
+primary_region = "cdg"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "4000"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # WebSocket upgrade requests need the same listener as plain HTTP.
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256

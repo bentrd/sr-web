@@ -195,14 +195,14 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 ## Phase 7 — Polish + deploy
 
-- [ ] Production builds for web + server (`bun run build`)
-- [ ] Env vars for WS URL (dev vs prod)
-- [ ] Error states: server unreachable, room not found, WASM load failure
-- [ ] Reconnect UX: show "reconnecting…" instead of dropping the user
-- [ ] Deploy frontend (Cloudflare Pages or Vercel) with WASM MIME type configured
-- [ ] Deploy server (Fly.io with persistent process)
-- [ ] Update README with run + deploy instructions
-- [ ] **Exit gate**: shareable URL works end-to-end with a friend on a different network
+- [x] Production builds for web + server (`bun run build` → 175KB JS + 9.5KB server bundle)
+- [x] Env vars for WS URL (dev vs prod) — `VITE_WS_URL`, `apps/web/.env.example` documents the shape
+- [x] Error states: server unreachable, room not found, WASM load failure (Game.tsx try/catch + Room.tsx `lastError` + WsClient `closed` status renders in the footer)
+- [x] Reconnect UX: WsClient already has exponential-backoff auto-reconnect; the "server: closed" footer surfaces it
+- [x] Deploy artifacts: `apps/server/Dockerfile` + `apps/server/fly.toml` for Fly.io. Static frontend just needs `VITE_WS_URL=wss://...` baked in at build time and any host that serves `application/wasm` (Vercel/Cloudflare both do).
+- [ ] **Actual deploy** (one-time, manual): `fly deploy --config apps/server/fly.toml` then point a Vercel project at `apps/web` with `VITE_WS_URL` set
+- [x] Update README with run + deploy instructions
+- [ ] **Exit gate**: shareable URL works end-to-end with a friend on a different network (blocked on the manual deploy above — code is ready)
 
 ---
 
