@@ -116,36 +116,18 @@ function bindCAbi(mod: SrModule): CAbi {
 	};
 }
 
-interface PlayerLabel {
+interface HoveredLabel {
 	id: string;
 	name: string;
 	color: string;
 	x: number;
 	y: number;
-	visible: boolean;
 }
 
-// When labels share a screen position (e.g. spawn), stack them vertically
-// so each remains readable. Sort by id for stable ordering.
-function stackLabels(labels: readonly PlayerLabel[]): readonly (PlayerLabel & { stackOffset: number })[] {
-	const byBucket = new Map<string, PlayerLabel[]>();
-	for (const l of labels) {
-		if (!l.visible) continue;
-		const key = `${Math.round(l.x / 8)}:${Math.round(l.y / 8)}`;
-		const list = byBucket.get(key) ?? [];
-		list.push(l);
-		byBucket.set(key, list);
-	}
-	const out: (PlayerLabel & { stackOffset: number })[] = [];
-	for (const list of byBucket.values()) {
-		list.sort((a, b) => a.id.localeCompare(b.id));
-		list.forEach((l, i) => out.push({ ...l, stackOffset: i * 18 }));
-	}
-	for (const l of labels) {
-		if (!l.visible) out.push({ ...l, stackOffset: 0 });
-	}
-	return out;
-}
+// Hover hit-radius in canvas pixels — roughly the player rectangle's
+// half-diagonal so the label appears as soon as the cursor enters the body.
+const HOVER_RADIUS_PX = 30;
+const HOVER_RADIUS_SQ = HOVER_RADIUS_PX * HOVER_RADIUS_PX;
 
 export function Game(): JSX.Element {
 	const { ws, identity, bindings, room, playerId } = useApp();
@@ -154,7 +136,11 @@ export function Game(): JSX.Element {
 	const abiRef = useRef<CAbi | null>(null);
 	const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 	const [error, setError] = useState<string | null>(null);
-	const [labels, setLabels] = useState<readonly PlayerLabel[]>([]);
+	const [hovered, setHovered] = useState<HoveredLabel | null>(null);
+	const [fps, setFps] = useState<number>(0);
+	// Mouse position in canvas-local pixels (matches sr_get_player_screen_pos
+	// output). null when the cursor isn't over the canvas.
+	const cursorRef = useRef<{ x: number; y: number } | null>(null);
 
 	// Memo'd lookup: peer id -> {name, color}. Updated on every room_state.
 	const peerInfo = useMemo(() => {
@@ -277,40 +263,80 @@ export function Game(): JSX.Element {
 		}
 	}, [room, status, playerId]);
 
-	// Per-frame name-label refresh. We render N+1 labels (peers + self)
-	// using transform: translate so the browser keeps it cheap.
+	// Per-frame: pick the label nearest to the cursor (within radius), if any,
+	// and update the FPS readout. Skips all per-player WASM screen-pos calls
+	// when the cursor isn't over the canvas — saves N FFI hops per frame in
+	// the common case where the user isn't hunting names.
 	useEffect(() => {
 		if (status !== "ready" || !room) return;
 		let raf = 0;
 		const ids = [...room.players.map((p) => p.id)];
+		let lastFpsUpdate = performance.now();
+		let framesSinceUpdate = 0;
 
 		const tick = (): void => {
+			framesSinceUpdate++;
+			const now = performance.now();
+			if (now - lastFpsUpdate >= 500) {
+				setFps(Math.round((framesSinceUpdate * 1000) / (now - lastFpsUpdate)));
+				framesSinceUpdate = 0;
+				lastFpsUpdate = now;
+			}
+
 			const abi = abiRef.current;
-			if (!abi) {
+			const cursor = cursorRef.current;
+			if (!abi || !cursor) {
+				if (hovered !== null) setHovered(null);
 				raf = requestAnimationFrame(tick);
 				return;
 			}
-			const next: PlayerLabel[] = [];
+
+			let bestId: string | null = null;
+			let bestDistSq = HOVER_RADIUS_SQ;
+			let bestX = 0, bestY = 0;
 			for (const id of ids) {
-				const info = peerInfo.get(id);
-				if (!info) continue;
 				const isLocal = id === playerId;
 				const pos = abi.getPlayerScreenPos(isLocal ? "" : id);
-				next.push({
-					id,
-					name: info.name,
-					color: rgbToCss(info.color, 1),
-					x: pos?.x ?? 0,
-					y: pos?.y ?? 0,
-					visible: pos !== null,
-				});
+				if (!pos) continue;
+				const dx = pos.x - cursor.x;
+				const dy = pos.y + 12 - cursor.y;  // bias y to player center
+				const dsq = dx * dx + dy * dy;
+				if (dsq < bestDistSq) {
+					bestDistSq = dsq;
+					bestId = id;
+					bestX = pos.x;
+					bestY = pos.y;
+				}
 			}
-			setLabels(next);
+
+			if (bestId === null) {
+				if (hovered !== null) setHovered(null);
+			} else {
+				const info = peerInfo.get(bestId);
+				if (info) {
+					const next: HoveredLabel = {
+						id: bestId,
+						name: info.name,
+						color: rgbToCss(info.color, 1),
+						x: bestX,
+						y: bestY,
+					};
+					if (
+						hovered === null ||
+						hovered.id !== next.id ||
+						hovered.x !== next.x ||
+						hovered.y !== next.y
+					) {
+						setHovered(next);
+					}
+				}
+			}
+
 			raf = requestAnimationFrame(tick);
 		};
 		raf = requestAnimationFrame(tick);
 		return () => cancelAnimationFrame(raf);
-	}, [status, room, peerInfo, playerId]);
+	}, [status, room, peerInfo, playerId, hovered]);
 
 	// Block default browser actions for game keys (space scrolling, etc).
 	useEffect(() => {
@@ -324,6 +350,25 @@ export function Game(): JSX.Element {
 		return () => window.removeEventListener("keydown", handler);
 	}, [status]);
 
+	const onCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+		const rect = canvas.getBoundingClientRect();
+		// The canvas internal resolution (1280x720) may be larger than its
+		// rendered size — scale the cursor into canvas-local pixels so it
+		// matches sr_get_player_screen_pos's coordinate space.
+		const scaleX = canvas.width / rect.width;
+		const scaleY = canvas.height / rect.height;
+		cursorRef.current = {
+			x: (e.clientX - rect.left) * scaleX,
+			y: (e.clientY - rect.top) * scaleY,
+		};
+	}, []);
+
+	const onCanvasMouseLeave = useCallback(() => {
+		cursorRef.current = null;
+	}, []);
+
 	return (
 		<div className="game-root" ref={containerRef}>
 			<canvas
@@ -334,22 +379,22 @@ export function Game(): JSX.Element {
 				className="game-canvas"
 				tabIndex={0}
 				onContextMenu={(e) => e.preventDefault()}
+				onMouseMove={onCanvasMouseMove}
+				onMouseLeave={onCanvasMouseLeave}
 			/>
 			<div className="game-overlay" aria-hidden>
-				{stackLabels(labels).map((l) =>
-					l.visible ? (
-						<div
-							key={l.id}
-							className="player-label"
-							style={{
-								color: l.color,
-								transform: `translate(${l.x}px, ${l.y - 22 - l.stackOffset}px) translateX(-50%)`,
-							}}
-						>
-							{l.name}
-						</div>
-					) : null,
+				{hovered && (
+					<div
+						className="player-label"
+						style={{
+							color: hovered.color,
+							transform: `translate(${hovered.x}px, ${hovered.y - 22}px) translateX(-50%)`,
+						}}
+					>
+						{hovered.name}
+					</div>
 				)}
+				{status === "ready" && <div className="fps-readout">{fps} fps</div>}
 			</div>
 			{status === "loading" && <div className="game-status">Loading game…</div>}
 			{status === "error" && (

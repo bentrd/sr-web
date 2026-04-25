@@ -45,124 +45,40 @@ void playground::reset()
 	}
 }
 
-void playground::update_input(const inputs& inputs)
+void playground::update_input(const inputs&)
 {
-	int32_t sel_x = (int32_t)((inputs.cursor_x + m_camera.position.x) / 16.0f);
-	int32_t sel_y = (int32_t)((inputs.cursor_y + m_camera.position.y) / 16.0f);
-
-	emu::tile_id sel_tile = (emu::tile_id)((size_t)inputs.scroll_y % emu::tile_count);
-
-	if (inputs.held_buttons[GLFW_MOUSE_BUTTON_LEFT] && m_level.m_tile_layer.m_tilemap != nullptr)
-		m_level.m_tile_layer.set_tile(sel_x, sel_y, sel_tile);
-	if (inputs.held_buttons[GLFW_MOUSE_BUTTON_RIGHT] && m_level.m_tile_layer.m_tilemap != nullptr)
-		m_level.m_tile_layer.set_tile(sel_x, sel_y, emu::tile_air);
-	if (inputs.held_keys['R'])
-		reset();
-	if (inputs.held_keys['J'] && m_player != nullptr)
-	{
-		std::cout << m_player->m_actor->d.velocity.x << " " << m_player->m_actor->d.velocity.y << " " << m_player->m_actor->d.position.x << " " << m_player->m_actor->d.position.y << "\n";
-	}
-	if (inputs.pressed_keys['F'])
-	{
-		m_paused = false;
-		m_step_count = 1;
-	}
-	if (inputs.pressed_keys['G'])
-	{
-		m_paused = false;
-		m_step_count = 10;
-	}
-	if (inputs.pressed_keys[GLFW_KEY_PAUSE])
-	{
-		m_paused = !m_paused;
-		m_step_count = 0;
-	}
+	// All editor / debug input handling (mouse paint, R reset, F/G step,
+	// Pause toggle) was removed for the web build — this is play-only.
 }
-
-std::mt19937 device(std::chrono::high_resolution_clock::now().time_since_epoch().count());
-
-emu::vector p1;
-emu::vector p2;
 
 void playground::update(emu::timespan delta, const inputs& inputs, emu::vector viewport_size)
 {
+	for (size_t i = 0; i < m_state.m_inputs[0].size(); i++)
+		m_state.m_inputs[0][i] = inputs.held_keys[input_map[i]];
 
-	if (inputs.pressed_buttons[GLFW_MOUSE_BUTTON_LEFT])
-	{
-		p1 = emu::vector{ (float)inputs.cursor_x, (float)inputs.cursor_y } + m_camera.position - emu::vector{ 12.5f, 12.5f };
-	}
-	if (inputs.pressed_buttons[GLFW_MOUSE_BUTTON_RIGHT])
-	{
-		p2 = emu::vector{ (float)inputs.cursor_x, (float)inputs.cursor_y } + m_camera.position - emu::vector{ 12.5f, 12.5f };
-	}
+	m_state.update(33333);
+	m_camera.viewport_size = viewport_size;
+	m_camera.update(33333, m_player->m_actor->d.position);
 
-	if (!m_paused)
-	{
-		for (size_t i = 0; i < m_state.m_inputs[0].size(); i++)
-			m_state.m_inputs[0][i] = inputs.held_keys[input_map[i]];
-	}
-
-	if (!m_paused)
-	{
-		m_state.update(33333);
-		m_camera.viewport_size = viewport_size;
-		m_camera.update(33333, m_player->m_actor->d.position);
-
-		util::event event = m_helper.get_event(*m_player);
-
-		if (m_print_events && event.evt != m_last_event && event.evt != util::evt_none)
-			std::cout << util::event::to_string(event.evt) << "\n";
-		m_last_event = event.evt;
-	}
-
-	if (m_step_count > 0)
-	{
-		m_step_count--;
-		if (m_step_count == 0)
-			m_paused = true;
-	}
+	util::event event = m_helper.get_event(*m_player);
+	m_last_event = event.evt;
 }
 
-void playground::draw(const inputs& inputs)
+void playground::draw(const inputs&)
 {
-	if (m_draw_right_pot_map)
-		draw::draw_right_pot_map(m_prep, m_camera);
-	if (m_draw_left_pot_map)
-		draw::draw_left_pot_map(m_prep, m_camera);
-
-	// Push the local player's color into the renderer before draw_state
-	// so the player rectangle uses the user's chosen color instead of
-	// the hardcoded red. No-op if JS hasn't set an identity yet.
 	if (m_local_identity.is_set)
 		draw::set_local_player_color(m_local_identity.r, m_local_identity.g, m_local_identity.b);
 
 	draw::draw_state(&m_state, m_camera);
 
-	// Ghosts are drawn after world + local player so they composite on
-	// top with their 50% alpha. They never enter `state.actors()`.
+	// Ghosts composite over world + local player at 50% alpha. They are
+	// never added to state.actors() — see AGENTS.md "Ghosts are render-only".
 	auto ghosts = m_ghosts.snapshot();
 	for (const auto& [id, ghost] : ghosts)
 		draw::draw_ghost(ghost, m_camera);
 
-	std::int32_t sel_x = (int32_t)((inputs.cursor_x + m_camera.position.x) / 16.0f);
-	std::int32_t sel_y = (int32_t)((inputs.cursor_y + m_camera.position.y) / 16.0f);
-
-	emu::tile_id sel_tile = (emu::tile_id)((std::size_t)inputs.scroll_y % emu::tile_count);
-
-	draw::draw_tile(sel_tile, emu::vector{ (float)(sel_x * 16), (float)(sel_y * 16) } - m_camera.position);
-
-	auto path = m_prep.get_min_path_dist(p1, p2);
-
-	if (path.second == nullptr || path.second->vertices.empty())
-	{
-		draw::draw_line(1.0f, 0.0f, 0.0f, p1 - m_camera.position + emu::vector{ 12.5f, 12.5f }, p2 - m_camera.position + emu::vector{ 12.5f, 12.5f });
-		return;
-	}
-
-	draw::draw_line(1.0f, 0.0f, 0.0f, p1 - m_camera.position + emu::vector{ 12.5f, 12.5f }, path.second->vertices.front()->pos - m_camera.position + emu::vector{ 12.5f, 12.5f });
-	for (size_t i = 0; i < path.second->vertices.size() - 1; i++)
-	{
-		draw::draw_line(1.0f, 0.0f, 0.0f, path.second->vertices[i]->pos - m_camera.position + emu::vector{ 12.5f, 12.5f }, path.second->vertices[i + 1]->pos - m_camera.position + emu::vector{ 12.5f, 12.5f });
-	}
-	draw::draw_line(1.0f, 0.0f, 0.0f, path.second->vertices.back()->pos - m_camera.position + emu::vector{ 12.5f, 12.5f }, p2 - m_camera.position + emu::vector{ 12.5f, 12.5f });
+	// Flush all batched primitives in a handful of draw calls. See
+	// drawing/draw_util.cpp — this is the load-bearing perf optimization
+	// (was thousands of glDrawArrays per frame before batching).
+	draw::flush_frame();
 }

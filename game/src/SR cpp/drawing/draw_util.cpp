@@ -10,17 +10,23 @@ using namespace draw;
 using namespace emu;
 
 // ---------------------------------------------------------------------------
-// Modern-GL backend
+// Modern-GL backend (batched)
 //
-// All public draw_* functions funnel into submit_triangles() / submit_lines(),
-// which upload a small batch of vec2 vertices to a single VBO and issue one
-// glDrawArrays. The shader takes a vec2 position attribute, an ortho
-// projection uniform, and a single uniform color (rgba) — no per-vertex
-// color, since every existing call site uses a single flat color anyway.
+// All public draw_* funnel into push_tri() / push_line(), which append
+// interleaved (vec2 pos, vec4 rgba) vertices into per-mode CPU buffers.
+// flush_frame() uploads each buffer once and issues exactly one
+// glDrawArrays per primitive mode (triangles + lines). This collapses
+// what used to be thousands of glDrawArrays per frame (one per tile,
+// one per gridline, one per actor) into TWO per frame. The cost of all
+// the JS<->WASM<->WebGL hops was the dominant frame-time bottleneck;
+// batching turns it into pure GPU throughput.
 //
-// The original SR-cpp used immediate-mode (`glBegin`/`glVertex2f`), which
-// WebGL does not support and macOS only supports in a compatibility profile.
-// This rewrite is required for both web and modern desktop.
+// The shader accepts per-vertex color so every primitive can have its
+// own (r,g,b,a) without breaking the batch. No texturing — every
+// primitive in this game is a flat-shaded rect, line, or triangle.
+//
+// The original SR-cpp used immediate-mode (`glBegin`/`glVertex2f`),
+// which WebGL doesn't support and macOS only honors in a compat profile.
 // ---------------------------------------------------------------------------
 
 namespace
@@ -30,28 +36,41 @@ namespace
 		"#version 300 es\n"
 		"precision highp float;\n"
 		"layout(location = 0) in vec2 a_pos;\n"
+		"layout(location = 1) in vec4 a_color;\n"
 		"uniform mat4 u_proj;\n"
-		"void main() { gl_Position = u_proj * vec4(a_pos, 0.0, 1.0); }\n";
+		"out vec4 v_color;\n"
+		"void main() {\n"
+		"  v_color = a_color;\n"
+		"  gl_Position = u_proj * vec4(a_pos, 0.0, 1.0);\n"
+		"}\n";
 
 	const char* k_frag_src =
 		"#version 300 es\n"
 		"precision highp float;\n"
-		"uniform vec4 u_color;\n"
+		"in vec4 v_color;\n"
 		"out vec4 o_color;\n"
-		"void main() { o_color = u_color; }\n";
+		"void main() { o_color = v_color; }\n";
 #else
 	const char* k_vert_src =
 		"#version 330 core\n"
 		"layout(location = 0) in vec2 a_pos;\n"
+		"layout(location = 1) in vec4 a_color;\n"
 		"uniform mat4 u_proj;\n"
-		"void main() { gl_Position = u_proj * vec4(a_pos, 0.0, 1.0); }\n";
+		"out vec4 v_color;\n"
+		"void main() {\n"
+		"  v_color = a_color;\n"
+		"  gl_Position = u_proj * vec4(a_pos, 0.0, 1.0);\n"
+		"}\n";
 
 	const char* k_frag_src =
 		"#version 330 core\n"
-		"uniform vec4 u_color;\n"
+		"in vec4 v_color;\n"
 		"out vec4 o_color;\n"
-		"void main() { o_color = u_color; }\n";
+		"void main() { o_color = v_color; }\n";
 #endif
+
+	// 6 floats per vertex: x, y, r, g, b, a.
+	constexpr GLsizei k_vert_stride_floats = 6;
 
 	struct gl_state
 	{
@@ -59,14 +78,15 @@ namespace
 		GLuint vao = 0;
 		GLuint vbo = 0;
 		GLint u_proj = -1;
-		GLint u_color = -1;
-		GLsizei vbo_capacity = 0;  // in vertices (2 floats each)
+		GLsizei vbo_capacity_verts = 0;
 		float proj[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 		bool initialized = false;
 
+		// Per-frame CPU vertex buffers. Cleared in flush_frame after upload.
+		std::vector<float> tri_verts;
+		std::vector<float> line_verts;
+
 		// Local player color override (sr_set_local_identity → playground::draw).
-		// Defaults match the original hardcoded red so behavior is unchanged
-		// when no identity is set.
 		float local_r = 1.0f;
 		float local_g = 0.0f;
 		float local_b = 0.0f;
@@ -129,43 +149,64 @@ namespace
 		out[15] = 1.0f;
 	}
 
+	inline void push_vert(std::vector<float>& buf, float x, float y, float r, float g, float b, float a)
+	{
+		buf.push_back(x); buf.push_back(y);
+		buf.push_back(r); buf.push_back(g); buf.push_back(b); buf.push_back(a);
+	}
+
+	inline void push_tri(float r, float g, float b, float a,
+		float x1, float y1, float x2, float y2, float x3, float y3)
+	{
+		auto& v = g_state.tri_verts;
+		push_vert(v, x1, y1, r, g, b, a);
+		push_vert(v, x2, y2, r, g, b, a);
+		push_vert(v, x3, y3, r, g, b, a);
+	}
+
+	inline void push_quad(float r, float g, float b, float a,
+		float x1, float y1, float x2, float y2)
+	{
+		// Two triangles forming an axis-aligned rectangle.
+		auto& v = g_state.tri_verts;
+		push_vert(v, x1, y1, r, g, b, a);
+		push_vert(v, x2, y1, r, g, b, a);
+		push_vert(v, x2, y2, r, g, b, a);
+		push_vert(v, x1, y1, r, g, b, a);
+		push_vert(v, x1, y2, r, g, b, a);
+		push_vert(v, x2, y2, r, g, b, a);
+	}
+
+	inline void push_line(float r, float g, float b, float a,
+		float x1, float y1, float x2, float y2)
+	{
+		auto& v = g_state.line_verts;
+		push_vert(v, x1, y1, r, g, b, a);
+		push_vert(v, x2, y2, r, g, b, a);
+	}
+
 	void ensure_vbo_capacity(GLsizei needed_verts)
 	{
-		if (needed_verts <= g_state.vbo_capacity) return;
+		if (needed_verts <= g_state.vbo_capacity_verts) return;
 
-		GLsizei new_cap = g_state.vbo_capacity > 0 ? g_state.vbo_capacity : 256;
+		GLsizei new_cap = g_state.vbo_capacity_verts > 0 ? g_state.vbo_capacity_verts : 1024;
 		while (new_cap < needed_verts) new_cap *= 2;
 
 		glBindBuffer(GL_ARRAY_BUFFER, g_state.vbo);
-		glBufferData(GL_ARRAY_BUFFER, new_cap * 2 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
-		g_state.vbo_capacity = new_cap;
+		glBufferData(GL_ARRAY_BUFFER, new_cap * k_vert_stride_floats * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+		g_state.vbo_capacity_verts = new_cap;
 	}
 
-	void submit(GLenum mode, const float* verts, GLsizei count, float r, float g, float b, float a)
+	void draw_buffer(GLenum mode, const std::vector<float>& verts)
 	{
-		if (!g_state.initialized) return;
+		if (verts.empty()) return;
+		const GLsizei vert_count = (GLsizei)(verts.size() / k_vert_stride_floats);
 
-		ensure_vbo_capacity(count);
+		ensure_vbo_capacity(vert_count);
 
-		glUseProgram(g_state.program);
-		glUniformMatrix4fv(g_state.u_proj, 1, GL_FALSE, g_state.proj);
-		glUniform4f(g_state.u_color, r, g, b, a);
-
-		glBindVertexArray(g_state.vao);
 		glBindBuffer(GL_ARRAY_BUFFER, g_state.vbo);
-		glBufferSubData(GL_ARRAY_BUFFER, 0, count * 2 * sizeof(float), verts);
-
-		glDrawArrays(mode, 0, count);
-	}
-
-	inline void submit_triangles(const float* verts, GLsizei vert_count, float r, float g, float b, float a)
-	{
-		submit(GL_TRIANGLES, verts, vert_count, r, g, b, a);
-	}
-
-	inline void submit_lines(const float* verts, GLsizei vert_count, float r, float g, float b, float a)
-	{
-		submit(GL_LINES, verts, vert_count, r, g, b, a);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, verts.size() * sizeof(float), verts.data());
+		glDrawArrays(mode, 0, vert_count);
 	}
 }
 
@@ -180,21 +221,44 @@ void draw::init()
 	glDeleteShader(fs);
 
 	g_state.u_proj = glGetUniformLocation(g_state.program, "u_proj");
-	g_state.u_color = glGetUniformLocation(g_state.program, "u_color");
 
 	glGenVertexArrays(1, &g_state.vao);
 	glGenBuffers(1, &g_state.vbo);
 
 	glBindVertexArray(g_state.vao);
 	glBindBuffer(GL_ARRAY_BUFFER, g_state.vbo);
+
+	const GLsizei stride = k_vert_stride_floats * sizeof(float);
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (void*)0);
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride, (void*)(2 * sizeof(float)));
 
 	// Alpha blending so ghost rendering (Phase 4d, a < 1.0) composites.
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+	// Reserve a reasonable batch upfront so the first frame doesn't reallocate
+	// while pushing thousands of tile verts. Tuned to fit a Pitfall-sized map.
+	g_state.tri_verts.reserve(64 * 1024);
+	g_state.line_verts.reserve(8 * 1024);
+
 	g_state.initialized = true;
+}
+
+void draw::flush_frame()
+{
+	if (!g_state.initialized) return;
+
+	glUseProgram(g_state.program);
+	glUniformMatrix4fv(g_state.u_proj, 1, GL_FALSE, g_state.proj);
+	glBindVertexArray(g_state.vao);
+
+	draw_buffer(GL_TRIANGLES, g_state.tri_verts);
+	draw_buffer(GL_LINES, g_state.line_verts);
+
+	g_state.tri_verts.clear();
+	g_state.line_verts.clear();
 }
 
 void draw::shutdown()
@@ -225,51 +289,39 @@ void draw::set_local_player_color(float r, float g, float b)
 
 void draw::draw_triangle_a(float r, float g, float b, float a, vector p1, vector p2, vector p3)
 {
-	const float verts[6] = { p1.x, p1.y, p2.x, p2.y, p3.x, p3.y };
-	submit_triangles(verts, 3, r, g, b, a);
+	push_tri(r, g, b, a, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
 }
 
 void draw::draw_triangle(float r, float g, float b, vector p1, vector p2, vector p3)
 {
-	draw_triangle_a(r, g, b, 1.0f, p1, p2, p3);
+	push_tri(r, g, b, 1.0f, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
 }
 
 void draw::draw_rectangle_a(float r, float g, float b, float a, vector p1, vector p2)
 {
-	const float verts[12] = {
-		p1.x, p1.y,
-		p2.x, p1.y,
-		p2.x, p2.y,
-		p1.x, p1.y,
-		p1.x, p2.y,
-		p2.x, p2.y,
-	};
-	submit_triangles(verts, 6, r, g, b, a);
+	push_quad(r, g, b, a, p1.x, p1.y, p2.x, p2.y);
 }
 
 void draw::draw_rectangle(float r, float g, float b, vector p1, vector p2)
 {
-	draw_rectangle_a(r, g, b, 1.0f, p1, p2);
+	push_quad(r, g, b, 1.0f, p1.x, p1.y, p2.x, p2.y);
 }
 
 void draw::draw_rectangle(float r, float g, float b, const aabb& bounds)
 {
 	// Fixes a long-standing typo from immediate-mode code where two of the
 	// six vertices used max_x for the y-coordinate.
-	draw_rectangle_a(r, g, b, 1.0f,
-		vector{ bounds.min_x, bounds.min_y },
-		vector{ bounds.max_x, bounds.max_y });
+	push_quad(r, g, b, 1.0f, bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y);
 }
 
 void draw::draw_line_a(float r, float g, float b, float a, vector p1, vector p2)
 {
-	const float verts[4] = { p1.x, p1.y, p2.x, p2.y };
-	submit_lines(verts, 2, r, g, b, a);
+	push_line(r, g, b, a, p1.x, p1.y, p2.x, p2.y);
 }
 
 void draw::draw_line(float r, float g, float b, vector p1, vector p2)
 {
-	draw_line_a(r, g, b, 1.0f, p1, p2);
+	push_line(r, g, b, 1.0f, p1.x, p1.y, p2.x, p2.y);
 }
 
 // ---------------------------------------------------------------------------

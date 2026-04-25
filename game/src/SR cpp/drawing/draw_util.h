@@ -32,6 +32,12 @@ namespace draw
 	void shutdown();
 	void set_viewport(int width_px, int height_px);
 
+	// Submit all queued geometry as ONE glDrawArrays per primitive mode
+	// (triangles + lines). Call once per frame after every draw_*. The
+	// per-primitive submit_*() calls just push into CPU buffers — nothing
+	// hits the GL until flush_frame.
+	void flush_frame();
+
 	// Override the default red used for the local-player rectangle.
 	// Called by the renderer once per frame when a local identity is set
 	// from JS (sr_set_local_identity). Persists until called again.
