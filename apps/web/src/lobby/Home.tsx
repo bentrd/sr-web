@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useApp } from "../state/AppState";
 import { hexToRgb, rgbToHex } from "./color";
 import { MAPS } from "./maps";
+import { ControlsModal } from "./ControlsModal";
 
 export function Home(): JSX.Element {
 	const { identity, setIdentity, ws, wsStatus, lastError, clearError, room } =
@@ -11,6 +12,7 @@ export function Home(): JSX.Element {
 
 	const [mapId, setMapId] = useState<string>(MAPS[0]?.id ?? "");
 	const [joinCode, setJoinCode] = useState<string>("");
+	const [controlsOpen, setControlsOpen] = useState(false);
 
 	const canSubmit = identity.name.trim().length > 0 && wsStatus.kind === "open";
 
@@ -126,9 +128,18 @@ export function Home(): JSX.Element {
 			)}
 
 			<footer className="status">
+				<button
+					type="button"
+					className="link-button"
+					onClick={() => setControlsOpen(true)}
+				>
+					Controls
+				</button>
+				<span className="status-dot">·</span>
 				server: {wsStatus.kind}
 				{wsStatus.kind === "closed" && ` — ${wsStatus.reason}`}
 			</footer>
+			<ControlsModal open={controlsOpen} onClose={() => setControlsOpen(false)} />
 		</main>
 	);
 }

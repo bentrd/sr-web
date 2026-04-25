@@ -18,6 +18,7 @@ import { useApp } from "../state/AppState";
 import { rgbToCss } from "../lobby/color";
 import { loadSrModule, type SrModule } from "../wasm/loadModule";
 import { base64ToBytes, bytesToBase64 } from "./snapshotCodec";
+import { ACTIONS } from "../state/bindings";
 
 // 30 Hz network send rate. Sim runs at ~300 Hz inside WASM, render at
 // monitor refresh — the three are deliberately decoupled (see AGENTS.md).
@@ -40,6 +41,7 @@ interface CAbi {
 	removeGhost: (id: string) => void;
 	getLocalSnapshot: () => Uint8Array | null;
 	getPlayerScreenPos: (id: string) => { x: number; y: number } | null;
+	setBinding: (action: number, glfwKey: number) => void;
 }
 
 function bindCAbi(mod: SrModule): CAbi {
@@ -59,6 +61,7 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_remove = mod.cwrap("sr_remove_ghost", null, ["string"]);
 	const f_get_snap = mod.cwrap("sr_get_local_snapshot", "number", ["number", "number"]);
 	const f_get_pos = mod.cwrap("sr_get_player_screen_pos", "number", ["string", "number", "number"]);
+	const f_set_binding = mod.cwrap("sr_set_binding", null, ["number", "number"]);
 
 	// Persistent scratch buffers in WASM heap. Allocated once; freed on
 	// page unload. malloc/free are exported but we never hit them more
@@ -107,6 +110,9 @@ function bindCAbi(mod: SrModule): CAbi {
 			const y = mod.HEAPF32[yPtr >> 2] ?? 0;
 			return { x, y };
 		},
+		setBinding: (action, glfwKey) => {
+			f_set_binding(action, glfwKey);
+		},
 	};
 }
 
@@ -142,7 +148,7 @@ function stackLabels(labels: readonly PlayerLabel[]): readonly (PlayerLabel & { 
 }
 
 export function Game(): JSX.Element {
-	const { ws, identity, room, playerId } = useApp();
+	const { ws, identity, bindings, room, playerId } = useApp();
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const abiRef = useRef<CAbi | null>(null);
@@ -173,6 +179,7 @@ export function Game(): JSX.Element {
 					identity.name || "Player",
 					identity.color[0], identity.color[1], identity.color[2],
 				);
+				ACTIONS.forEach((action, idx) => abi.setBinding(idx, bindings[action].code));
 				abi.loadMap(`/maps/${room.mapId}.sr`);
 				setStatus("ready");
 			})
@@ -189,6 +196,14 @@ export function Game(): JSX.Element {
 		// when the game boots. The room map is fixed for the session.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [room?.mapId]);
+
+	// Live re-apply bindings whenever the user rebinds — no need to
+	// reload the WASM, sr_set_binding just updates the input_map slot.
+	useEffect(() => {
+		const abi = abiRef.current;
+		if (status !== "ready" || !abi) return;
+		ACTIONS.forEach((action, idx) => abi.setBinding(idx, bindings[action].code));
+	}, [bindings, status]);
 
 	// Push the local snapshot at 30 Hz. Idle until the ABI is ready.
 	useEffect(() => {
