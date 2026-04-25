@@ -9,6 +9,7 @@
 
 #include "sr_api.h"
 #include "../instance.h"
+#include "../playground.h"
 #include "../emulation/player.h"
 #include "../emulation/grapple.h"
 
@@ -179,5 +180,15 @@ extern "C"
 		*out_x = top_left.x + gh.size.x * 0.5f;
 		*out_y = top_left.y;
 		return 1;
+	}
+
+	// Rebind a logical action to a GLFW key code. action is the emu::input
+	// enum (0=left, 1=right, 2=jump, 3=grapple, 4=slide, 5=boost, 6=item,
+	// 7=swap_item). Out-of-range action or non-positive key are ignored.
+	void sr_set_binding(int action, int glfw_key)
+	{
+		if (action < 0 || action >= static_cast<int>(emu::input_count)) return;
+		if (glfw_key <= 0) return;
+		input_map[static_cast<std::size_t>(action)] = glfw_key;
 	}
 }

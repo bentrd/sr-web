@@ -33,6 +33,11 @@ struct instance
 	std::size_t m_ups;
 	bool m_drawing_enabled;
 
+	// Sim-step accumulator. tick_frame() runs at the browser's render rate
+	// (~60Hz) but the physics step is fixed at `delta` (1/300s). We pump
+	// multiple sim steps per render frame until real time catches up.
+	emu::timespan m_sim_accumulator = 0;
+
 	playground m_playground;
 
 	instance();

@@ -62,7 +62,7 @@ void instance::run(const std::string& map_path)
 void instance::tick_frame()
 {
 	auto now = std::chrono::high_resolution_clock::now();
-	emu::timespan delta = (now - m_update_start).count() / 100ull;
+	emu::timespan real_delta = (now - m_update_start).count() / 100ull;
 	m_update_start = now;
 
 	while (now - m_last_ups_t >= std::chrono::seconds(1))
@@ -73,7 +73,24 @@ void instance::tick_frame()
 	}
 
 	update_input();
-	update(delta);
+
+	// Fixed-timestep accumulator: pump 1/300s sim steps until we've
+	// caught up to wall-clock time. Cap at 8 steps per render frame
+	// (~26ms of sim per frame) to avoid spiral-of-death after a tab
+	// suspend / GC pause — better to drop time than freeze the page.
+	m_sim_accumulator += real_delta;
+	constexpr int max_steps_per_frame = 8;
+	int steps = 0;
+	while (m_sim_accumulator >= ::delta && steps < max_steps_per_frame)
+	{
+		update(::delta);
+		m_sim_accumulator -= ::delta;
+		++steps;
+		m_updates++;
+	}
+	if (m_sim_accumulator > ::delta * max_steps_per_frame)
+		m_sim_accumulator = ::delta * max_steps_per_frame;
+
 	draw();
 
 	// limit_rate is a busy-wait — only useful on desktop. The web build
@@ -82,8 +99,6 @@ void instance::tick_frame()
 	if (m_drawing_enabled)
 		limit_rate(300);
 #endif
-
-	m_updates++;
 }
 
 bool instance::should_close() const

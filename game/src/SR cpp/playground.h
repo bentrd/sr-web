@@ -12,17 +12,9 @@
 #include "network/ghost_manager.h"
 #include "network/local_identity.h"
 
-constexpr std::array<int, emu::input_count> input_map
-{
-	GLFW_KEY_A,           // left
-	GLFW_KEY_D,           // right
-	GLFW_KEY_SPACE,       // jump
-	GLFW_KEY_W,           // grapple
-	GLFW_KEY_S,           // slide
-	GLFW_KEY_LEFT_SHIFT,  // boost
-	GLFW_KEY_E,           // item
-	GLFW_KEY_F            // swap item
-};
+// Mutable so JS can rebind individual actions via sr_set_binding().
+// Defaults match the original SR-cpp scheme.
+extern std::array<int, emu::input_count> input_map;
 
 struct playground
 {
