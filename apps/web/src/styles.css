@@ -391,6 +391,15 @@ button.primary {
 	width: min(34rem, 100%);
 }
 
+@keyframes sr-pulse-ring {
+	0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.0); }
+	50%      { box-shadow: 0 0 0 6px rgba(251, 191, 36, 0.18); }
+}
+
+.sr-pulse {
+	animation: sr-pulse-ring 1.8s ease-in-out infinite;
+}
+
 .visual-hint {
 	font-size: 0.75rem;
 	color: var(--muted);

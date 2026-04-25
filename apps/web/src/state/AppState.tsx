@@ -27,9 +27,13 @@ const IDENTITY_KEY = "sr-web.identity";
 const FPS_KEY = "sr-web.target-fps";
 
 // Match what the C++ side accepts (sr_set_target_fps clamps internally too).
+// In the WASM build sim and render share a single tick_frame() loop, so
+// this slider effectively controls the engine rate; we default to 300Hz
+// to match the desktop build's limit_rate(300).
 export const FPS_MIN = 30;
 export const FPS_MAX = 300;
-export const FPS_DEFAULT = 60;
+export const FPS_DEFAULT = 300;
+const LEGACY_FPS_DEFAULT = 60;
 
 function loadTargetFps(): number {
 	try {
@@ -37,7 +41,12 @@ function loadTargetFps(): number {
 		if (raw === null) return FPS_DEFAULT;
 		const n = Number(raw);
 		if (!Number.isFinite(n)) return FPS_DEFAULT;
-		return Math.max(FPS_MIN, Math.min(FPS_MAX, Math.round(n)));
+		const clamped = Math.max(FPS_MIN, Math.min(FPS_MAX, Math.round(n)));
+		// One-time migration: bump anyone still on the previous default
+		// (60) up to the new default (300). Users who really want to
+		// throttle can drag the slider back down.
+		if (clamped === LEGACY_FPS_DEFAULT) return FPS_DEFAULT;
+		return clamped;
 	} catch {
 		return FPS_DEFAULT;
 	}

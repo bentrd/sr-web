@@ -113,7 +113,7 @@ export function OptionsModal({ open, onClose }: OptionsModalProps): JSX.Element 
 
 				<div className="fps-row">
 					<label className="bindings-label" htmlFor="options-fps-slider">
-						Render FPS
+						Engine FPS
 					</label>
 					<input
 						id="options-fps-slider"

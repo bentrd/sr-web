@@ -33,7 +33,16 @@ export function Home(): JSX.Element {
 			? displayName.trim()
 			: `${identity.name.trim() || "anonymous"}'s lobby`;
 
-	const canSubmit = identity.name.trim().length > 0 && wsStatus.kind === "open";
+	const noName = identity.name.trim().length === 0;
+	const canSubmit = !noName && wsStatus.kind === "open";
+	// Single source of truth for why a submit button is disabled, fed to the
+	// `title` attribute so the user sees the reason on hover instead of
+	// guessing why nothing happens.
+	const disabledReason = noName
+		? "Enter a name to play"
+		: wsStatus.kind !== "open"
+			? "Connecting to server…"
+			: undefined;
 
 	const filteredPublic = useMemo(() => {
 		const q = filter.trim().toLowerCase();
@@ -117,7 +126,21 @@ export function Home(): JSX.Element {
 					</div>
 				</div>
 
-				<div className="flex h-12 items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-900/60 p-1 pl-1">
+				<div
+					className={`relative flex h-12 items-center gap-1 rounded-xl border bg-zinc-900/60 p-1 pl-1 transition ${
+						noName
+							? "border-amber-400/60 ring-2 ring-amber-400/30 sr-pulse"
+							: "border-zinc-800"
+					}`}
+				>
+					{noName && (
+						<span
+							className="pointer-events-none absolute -bottom-7 right-2 whitespace-nowrap text-xs font-medium text-amber-300/90"
+							aria-hidden
+						>
+							↑ pick a name to start
+						</span>
+					)}
 					<label className="relative h-9 w-9 shrink-0 cursor-pointer overflow-hidden rounded-lg border border-zinc-700">
 						<span
 							className="absolute inset-0"
@@ -140,7 +163,9 @@ export function Home(): JSX.Element {
 						onChange={(e) => setIdentity({ ...identity, name: e.target.value })}
 						placeholder="your name"
 						autoFocus={!identity.name}
-						className="h-9 w-36 bg-transparent px-2 text-sm font-medium text-zinc-100 outline-none placeholder:text-zinc-500"
+						className={`h-9 w-36 bg-transparent px-2 text-sm font-medium text-zinc-100 outline-none placeholder:text-zinc-500 ${
+							noName ? "placeholder:text-amber-300/70" : ""
+						}`}
 					/>
 					<button
 						type="button"
@@ -162,7 +187,12 @@ export function Home(): JSX.Element {
 				</div>
 			)}
 
-			<div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
+			<div
+				className={`grid grid-cols-1 gap-5 transition lg:grid-cols-5 ${
+					noName ? "pointer-events-none opacity-40 blur-[1px] select-none" : ""
+				}`}
+				aria-hidden={noName}
+			>
 				<section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 lg:col-span-3">
 					<div className="mb-4 flex flex-wrap items-end justify-between gap-3">
 						<div>
@@ -246,6 +276,7 @@ export function Home(): JSX.Element {
 											type="button"
 											onClick={() => handleJoinPublic(r.code)}
 											disabled={!canSubmit || full}
+											title={full ? "Lobby is full" : disabledReason}
 											className="h-10 shrink-0 rounded-lg border-0 bg-amber-400/10 px-4 text-sm font-medium text-amber-200 ring-1 ring-inset ring-amber-400/25 transition hover:bg-amber-400/20 hover:text-amber-100 hover:ring-amber-400/40 disabled:cursor-not-allowed disabled:bg-zinc-800/50 disabled:text-zinc-500 disabled:ring-zinc-700"
 										>
 											{full ? "Full" : "Join"}
@@ -356,6 +387,7 @@ export function Home(): JSX.Element {
 							<button
 								type="submit"
 								disabled={!canSubmit}
+								title={disabledReason}
 								className="mt-2 h-10 rounded-lg border-0 bg-amber-400/10 px-4 text-sm font-medium text-amber-200 ring-1 ring-inset ring-amber-400/25 transition hover:bg-amber-400/20 hover:text-amber-100 hover:ring-amber-400/40 disabled:cursor-not-allowed disabled:bg-zinc-800/50 disabled:text-zinc-500 disabled:ring-zinc-700"
 							>
 								Create lobby
@@ -382,6 +414,11 @@ export function Home(): JSX.Element {
 							<button
 								type="submit"
 								disabled={!canSubmit || !joinCode.trim()}
+								title={
+									!joinCode.trim() && !disabledReason
+										? "Enter a room code"
+										: disabledReason
+								}
 								className="h-10 shrink-0 rounded-lg border-0 bg-zinc-800 px-4 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
 							>
 								Join
