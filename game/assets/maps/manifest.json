@@ -1,0 +1,22 @@
+[
+	{
+		"id": "pitfall",
+		"displayName": "Pitfall",
+		"file": "pitfall.sr"
+	},
+	{
+		"id": "genetics",
+		"displayName": "Genetics",
+		"file": "genetics.sr"
+	},
+	{
+		"id": "grapple_circuit",
+		"displayName": "Grapple Circuit",
+		"file": "grapple_circuit.sr"
+	},
+	{
+		"id": "oasis_abyss",
+		"displayName": "Oasis Abyss",
+		"file": "oasis_abyss.sr"
+	}
+]
