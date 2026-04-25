@@ -589,7 +589,14 @@ void draw::draw_ghost(const net::ghost_state& ghost, const camera& camera)
 	// only the local player owns the HUD.
 	const float a = 0.5f;
 
-	const vector top_left = ghost.position - camera.position;
+	// Crop the top of the standing rectangle when the slide bit is set
+	// (anim & 1). 20px is the same offset the local C++ uses to swap from
+	// the standing hitbox to the sliding one — keeping it in sync means a
+	// remote ghost looks identical to the local player on the same input.
+	const bool is_sliding = (ghost.anim & 0x1u) != 0;
+	const float slide_top_inset_px = 20.0f;
+	const float top_inset = is_sliding ? slide_top_inset_px : 0.0f;
+	const vector top_left{ ghost.position.x - camera.position.x, ghost.position.y + top_inset - camera.position.y };
 	const vector bot_right = ghost.position + ghost.size - camera.position;
 
 	// Push the rope + end markers BEFORE the ghost rectangle so the body

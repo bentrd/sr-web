@@ -126,7 +126,10 @@ extern "C"
 
 		const auto& a = p->m_actor->d;
 		const std::int8_t facing = (a.velocity.x >= 0.0f) ? std::int8_t{ 1 } : std::int8_t{ -1 };
-		const std::uint8_t anim = 0;
+		// anim is a bitfield: bit 0 = is_sliding. Future visual states
+		// (climbing, stunned, etc.) can claim more bits without bumping
+		// PROTOCOL_VERSION. Renderers must mask, not equality-check.
+		const std::uint8_t anim = static_cast<std::uint8_t>(p->d.is_sliding ? 1 : 0);
 
 		const bool g_active = (p->m_grapple != nullptr) && p->m_grapple->m_actor != nullptr
 			&& p->m_grapple->m_actor->d.is_collision_active;
@@ -154,20 +157,13 @@ extern "C"
 		write_le(out_buf + 28, g_attach.x);
 		write_le(out_buf + 32, g_attach.y);
 		write_le(out_buf + 36, g_length);
-		// Player collision rectangle — write the *active* hitbox (standing
-		// or sliding) so remote clients render the ghost in the same shape
-		// the local player draws. The actor's d.size stays a fixed 25x45;
-		// the visible rectangle is on get_collision(), which swaps to the
-		// shorter sliding hitbox while is_sliding is set. Overwriting the
-		// position too keeps the rectangle anchored to the visible top-left
-		// (sliding hitbox starts 20px below the standing top).
-		emu::i_collision_shape* shape = p->get_collision();
-		const auto top_left = shape->get_vertex(0);
-		const auto bot_right = shape->get_vertex(2);
-		write_le(out_buf +  0, top_left.x);
-		write_le(out_buf +  4, top_left.y);
-		write_le(out_buf + 40, bot_right.x - top_left.x);
-		write_le(out_buf + 44, bot_right.y - top_left.y);
+		// Always send the *standing* rectangle (top-left + standing size),
+		// not the active hitbox. Sliding state rides in the anim bitfield
+		// above; the receiving renderer crops the top of the rectangle when
+		// the slide bit is set. This keeps the position/size pair stable
+		// across slide transitions so JS-side lerp doesn't drift.
+		write_le(out_buf + 40, a.size.x);
+		write_le(out_buf + 44, a.size.y);
 		return k_snapshot_bytes;
 	}
 
