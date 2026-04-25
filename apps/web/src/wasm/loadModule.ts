@@ -39,6 +39,12 @@ declare global {
 	}
 }
 
+// `BASE_URL` is the public path Vite was built with — `/` in dev, `/sr-web/`
+// for GH Pages. Always trailing-slashed. We need to anchor sr.js + its
+// companion files (sr.wasm, sr.data) here so they resolve regardless of the
+// current SPA route.
+const BASE = import.meta.env.BASE_URL;
+
 let scriptPromise: Promise<CreateSrModule> | null = null;
 
 function loadScript(): Promise<CreateSrModule> {
@@ -49,7 +55,7 @@ function loadScript(): Promise<CreateSrModule> {
 			return;
 		}
 		const tag = document.createElement("script");
-		tag.src = "/sr.js";
+		tag.src = `${BASE}sr.js`;
 		tag.async = true;
 		tag.onload = (): void => {
 			if (!window.createSrModule) {
@@ -59,7 +65,7 @@ function loadScript(): Promise<CreateSrModule> {
 			resolve(window.createSrModule);
 		};
 		tag.onerror = (): void => {
-			reject(new Error("Failed to load /sr.js — is build:wasm green?"));
+			reject(new Error(`Failed to load ${BASE}sr.js — is build:wasm green?`));
 			scriptPromise = null;
 		};
 		document.head.appendChild(tag);
@@ -71,6 +77,6 @@ export async function loadSrModule(canvas: HTMLCanvasElement): Promise<SrModule>
 	const factory = await loadScript();
 	return factory({
 		canvas,
-		locateFile: (path) => `/${path}`,
+		locateFile: (path) => `${BASE}${path}`,
 	});
 }
