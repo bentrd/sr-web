@@ -561,12 +561,31 @@ void draw::draw_ghost(const net::ghost_state& ghost, const camera& camera)
 	{
 		const vector origin_s = ghost.grapple_origin - camera.position;
 		const vector attach_s = ghost.grapple_attach - camera.position;
-		draw_line_a(ghost.color_r, ghost.color_g, ghost.color_b, a, origin_s, attach_s);
-		// Small marker at the attach point so it's visible against any
-		// background — ~6px square centered on the attach point.
+		// Draw the rope as a thin oriented quad rather than GL_LINES, since
+		// WebGL2 only guarantees 1px line width and the ghost color at 50%
+		// alpha is otherwise easy to lose against the map. Two triangles
+		// along the rope direction, offset perpendicularly by half-thickness.
+		const vector dir = attach_s - origin_s;
+		const float len = dir.length();
+		if (len > 0.001f)
+		{
+			const float half_w = 1.5f;
+			const vector n{ -dir.y / len * half_w, dir.x / len * half_w };
+			draw_triangle_a(ghost.color_r, ghost.color_g, ghost.color_b, a,
+				origin_s + n, attach_s + n, attach_s - n);
+			draw_triangle_a(ghost.color_r, ghost.color_g, ghost.color_b, a,
+				origin_s + n, attach_s - n, origin_s - n);
+		}
+		// Hook head at the attach point (~10px) so it's visually distinct
+		// from rope. Filled at full ghost alpha to read as the connection.
 		draw_rectangle_a(ghost.color_r, ghost.color_g, ghost.color_b, a,
-			attach_s + vector{ -3.0f, -3.0f },
-			attach_s + vector{  3.0f,  3.0f });
+			attach_s + vector{ -5.0f, -5.0f },
+			attach_s + vector{  5.0f,  5.0f });
+		// Origin marker at the player end so the rope clearly attaches
+		// there even if it overlaps with the ghost body.
+		draw_rectangle_a(ghost.color_r, ghost.color_g, ghost.color_b, a,
+			origin_s + vector{ -3.0f, -3.0f },
+			origin_s + vector{  3.0f,  3.0f });
 	}
 }
 

@@ -36,6 +36,7 @@ interface CAbi {
 		gxOrigin: number, gyOrigin: number,
 		gxAttach: number, gyAttach: number,
 		gLength: number, gTaut: number,
+		sizeX: number, sizeY: number,
 	) => void;
 	setGhostIdentity: (id: string, name: string, r: number, g: number, b: number) => void;
 	removeGhost: (id: string) => void;
@@ -53,6 +54,7 @@ function bindCAbi(mod: SrModule): CAbi {
 		"number", "number",
 		"number", "number",
 		"number",
+		"number", "number",
 		"number", "number",
 		"number", "number",
 		"number", "number",
@@ -77,7 +79,7 @@ function bindCAbi(mod: SrModule): CAbi {
 		loadMap: (path) => {
 			f_load(path);
 		},
-		pushGhost: (id, posX, posY, velX, velY, facing, anim, grappleActive, gxOrigin, gyOrigin, gxAttach, gyAttach, gLength, gTaut) => {
+		pushGhost: (id, posX, posY, velX, velY, facing, anim, grappleActive, gxOrigin, gyOrigin, gxAttach, gyAttach, gLength, gTaut, sizeX, sizeY) => {
 			f_push(
 				id,
 				posX, posY,
@@ -87,6 +89,7 @@ function bindCAbi(mod: SrModule): CAbi {
 				gxOrigin, gyOrigin,
 				gxAttach, gyAttach,
 				gLength, gTaut,
+				sizeX, sizeY,
 			);
 		},
 		setGhostIdentity: (id, name, r, g, b) => {
@@ -237,6 +240,7 @@ export function Game(): JSX.Element {
 						dv.getFloat32(20, true), dv.getFloat32(24, true),
 						dv.getFloat32(28, true), dv.getFloat32(32, true),
 						dv.getFloat32(36, true), dv.getUint8(19),
+						dv.getFloat32(40, true), dv.getFloat32(44, true),
 					);
 					return;
 				}

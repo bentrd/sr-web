@@ -24,7 +24,8 @@ namespace net
 			std::int8_t facing, std::uint8_t anim,
 			bool grapple_active,
 			emu::vector grapple_origin, emu::vector grapple_attach,
-			float grapple_length, bool grapple_taut);
+			float grapple_length, bool grapple_taut,
+			emu::vector size);
 
 		// Sets the persistent identity for a ghost. Safe to call before
 		// the first push; the ghost is created on demand.

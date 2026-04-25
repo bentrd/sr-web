@@ -35,8 +35,10 @@ namespace
 	// 28      4     grapple_attach_x
 	// 32      4     grapple_attach_y
 	// 36      4     grapple_length
-	// total:  40 bytes
-	constexpr std::size_t k_snapshot_bytes = 40;
+	// 40      4     size_x  (player collision width, for ghost rendering)
+	// 44      4     size_y  (player collision height)
+	// total:  48 bytes
+	constexpr std::size_t k_snapshot_bytes = 48;
 
 	template <typename T>
 	void write_le(std::uint8_t* dst, T value)
@@ -83,7 +85,8 @@ extern "C"
 		std::uint8_t grapple_active,
 		float gx_origin, float gy_origin,
 		float gx_attach, float gy_attach,
-		float g_length, std::uint8_t g_taut)
+		float g_length, std::uint8_t g_taut,
+		float size_x, float size_y)
 	{
 		if (g_inst == nullptr || id == nullptr) return;
 		g_inst->m_playground.m_ghosts.push(
@@ -94,7 +97,8 @@ extern "C"
 			grapple_active != 0,
 			emu::vector{ gx_origin, gy_origin },
 			emu::vector{ gx_attach, gy_attach },
-			g_length, g_taut != 0);
+			g_length, g_taut != 0,
+			emu::vector{ size_x, size_y });
 	}
 
 	void sr_set_ghost_identity(const char* id, const char* name, float r, float g, float b)
@@ -150,6 +154,12 @@ extern "C"
 		write_le(out_buf + 28, g_attach.x);
 		write_le(out_buf + 32, g_attach.y);
 		write_le(out_buf + 36, g_length);
+		// Player collision size — used by ghost rendering on remote
+		// clients so the rectangle matches the actual hitbox (sliding
+		// players, custom characters, etc.) instead of a hardcoded default.
+		const auto size = a.size;
+		write_le(out_buf + 40, size.x);
+		write_le(out_buf + 44, size.y);
 		return k_snapshot_bytes;
 	}
 

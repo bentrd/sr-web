@@ -18,6 +18,8 @@ export interface DecodedSnapshot {
 	grappleAttachX: number;
 	grappleAttachY: number;
 	grappleLength: number;
+	sizeX: number;
+	sizeY: number;
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {
@@ -50,5 +52,7 @@ export function decodeSnapshot(bytes: Uint8Array): DecodedSnapshot | null {
 		grappleAttachX: dv.getFloat32(SNAPSHOT_OFFSETS.grappleAttachX, true),
 		grappleAttachY: dv.getFloat32(SNAPSHOT_OFFSETS.grappleAttachY, true),
 		grappleLength: dv.getFloat32(SNAPSHOT_OFFSETS.grappleLength, true),
+		sizeX: dv.getFloat32(SNAPSHOT_OFFSETS.sizeX, true),
+		sizeY: dv.getFloat32(SNAPSHOT_OFFSETS.sizeY, true),
 	};
 }

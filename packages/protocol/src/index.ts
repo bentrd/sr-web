@@ -5,7 +5,7 @@
 // change, update both this file AND the C++ sr_get_local_snapshot /
 // sr_push_ghost signatures in the same commit.
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type RGB = readonly [r: number, g: number, b: number];
 
@@ -83,7 +83,7 @@ export type ChatMsg = {
 
 // Fixed-size snapshot, must match k_snapshot_bytes on the C++ side.
 // Bumping this is a breaking wire change — bump PROTOCOL_VERSION too.
-export const SNAPSHOT_BYTES = 40;
+export const SNAPSHOT_BYTES = 48;
 
 // Field byte offsets — the layout is documented in sr_api.cpp.
 // Exposed so the JS encoder/decoder can read/write at fixed positions
@@ -102,6 +102,8 @@ export const SNAPSHOT_OFFSETS = {
 	grappleAttachX: 28,
 	grappleAttachY: 32,
 	grappleLength: 36,
+	sizeX: 40,
+	sizeY: 44,
 } as const;
 
 export type SnapshotIn = {
