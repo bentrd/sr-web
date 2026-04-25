@@ -118,7 +118,19 @@ void playground::draw(const inputs& inputs)
 	if (m_draw_left_pot_map)
 		draw::draw_left_pot_map(m_prep, m_camera);
 
+	// Push the local player's color into the renderer before draw_state
+	// so the player rectangle uses the user's chosen color instead of
+	// the hardcoded red. No-op if JS hasn't set an identity yet.
+	if (m_local_identity.is_set)
+		draw::set_local_player_color(m_local_identity.r, m_local_identity.g, m_local_identity.b);
+
 	draw::draw_state(&m_state, m_camera);
+
+	// Ghosts are drawn after world + local player so they composite on
+	// top with their 50% alpha. They never enter `state.actors()`.
+	auto ghosts = m_ghosts.snapshot();
+	for (const auto& [id, ghost] : ghosts)
+		draw::draw_ghost(ghost, m_camera);
 
 	std::int32_t sel_x = (int32_t)((inputs.cursor_x + m_camera.position.x) / 16.0f);
 	std::int32_t sel_y = (int32_t)((inputs.cursor_y + m_camera.position.y) / 16.0f);

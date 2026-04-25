@@ -9,6 +9,8 @@
 #include "input_handler.h"
 #include "utility/event.h"
 #include "utility/level_preprocessing.h"
+#include "network/ghost_manager.h"
+#include "network/local_identity.h"
 
 constexpr std::array<int, emu::input_count> input_map
 {
@@ -39,6 +41,11 @@ struct playground
 	util::level_prep m_prep;
 	util::get_event_helper m_helper;
 	util::event_type m_last_event = util::evt_none;
+
+	// Set from JS (sr_set_local_identity). When unset, the renderer
+	// falls back to the original red.
+	net::local_identity m_local_identity;
+	net::ghost_manager m_ghosts;
 
 	playground();
 

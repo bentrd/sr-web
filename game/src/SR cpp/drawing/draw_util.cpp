@@ -63,6 +63,13 @@ namespace
 		GLsizei vbo_capacity = 0;  // in vertices (2 floats each)
 		float proj[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 		bool initialized = false;
+
+		// Local player color override (sr_set_local_identity → playground::draw).
+		// Defaults match the original hardcoded red so behavior is unchanged
+		// when no identity is set.
+		float local_r = 1.0f;
+		float local_g = 0.0f;
+		float local_b = 0.0f;
 	};
 
 	gl_state g_state;
@@ -203,6 +210,13 @@ void draw::set_viewport(int width_px, int height_px)
 {
 	glViewport(0, 0, width_px, height_px);
 	make_ortho(g_state.proj, 0.0f, (float)width_px, (float)height_px, 0.0f, -1.0f, 1.0f);
+}
+
+void draw::set_local_player_color(float r, float g, float b)
+{
+	g_state.local_r = r;
+	g_state.local_g = g;
+	g_state.local_b = b;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,8 +364,10 @@ void draw::draw_tile_layer(tile_layer_base* tile_layer, const camera& camera)
 
 void draw::draw_player(player* player, const camera& camera)
 {
+	// Local player color is overridden via set_local_player_color() once
+	// JS sets the identity. Default matches the original red.
 	draw::draw_rectangle(
-		1.0f, 0.0f, 0.0f,
+		g_state.local_r, g_state.local_g, g_state.local_b,
 		player->get_collision()->get_vertex(0) - camera.position,
 		player->get_collision()->get_vertex(2) - camera.position);
 
@@ -488,6 +504,31 @@ void draw::draw_right_pot_map(const util::level_prep& prep, const camera& camera
 				draw::draw_triangle(col_r.r, col_r.g, col_r.b, screen_pos + vector{ 16.0f, 0.0f }, screen_pos + vector{ 16.0f, 16.0f }, screen_pos + vector{ 0.0f, 16.0f });
 			}
 		}
+	}
+}
+
+void draw::draw_ghost(const net::ghost_state& ghost, const camera& camera)
+{
+	// Draw the ghost body at half-alpha. Ghost grapple (when active)
+	// renders the rope using the same color so it reads as "their hook"
+	// rather than world geometry. No HUD bars (boost meter etc), since
+	// only the local player owns the HUD.
+	const float a = 0.5f;
+
+	const vector top_left = ghost.position - camera.position;
+	const vector bot_right = ghost.position + ghost.size - camera.position;
+	draw_rectangle_a(ghost.color_r, ghost.color_g, ghost.color_b, a, top_left, bot_right);
+
+	if (ghost.grapple_active)
+	{
+		const vector origin_s = ghost.grapple_origin - camera.position;
+		const vector attach_s = ghost.grapple_attach - camera.position;
+		draw_line_a(ghost.color_r, ghost.color_g, ghost.color_b, a, origin_s, attach_s);
+		// Small marker at the attach point so it's visible against any
+		// background — ~6px square centered on the attach point.
+		draw_rectangle_a(ghost.color_r, ghost.color_g, ghost.color_b, a,
+			attach_s + vector{ -3.0f, -3.0f },
+			attach_s + vector{  3.0f,  3.0f });
 	}
 }
 

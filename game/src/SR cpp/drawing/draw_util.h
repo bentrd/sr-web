@@ -20,6 +20,7 @@
 #include "../emulation/state.h"
 #include "../emulation/tile_layer_base.h"
 #include "../utility/level_preprocessing.h"
+#include "../network/ghost_state.h"
 
 namespace draw
 {
@@ -30,6 +31,11 @@ namespace draw
 	void init();
 	void shutdown();
 	void set_viewport(int width_px, int height_px);
+
+	// Override the default red used for the local-player rectangle.
+	// Called by the renderer once per frame when a local identity is set
+	// from JS (sr_set_local_identity). Persists until called again.
+	void set_local_player_color(float r, float g, float b);
 
 	void draw_triangle(float r, float g, float b, emu::vector p1, emu::vector p2, emu::vector p3);
 	void draw_rectangle(float r, float g, float b, const emu::aabb& bounds);
@@ -54,6 +60,9 @@ namespace draw
 
 	void draw_right_pot_map(const util::level_prep& prep, const camera& camera);
 	void draw_left_pot_map(const util::level_prep& prep, const camera& camera);
+
+	// Render a single remote-player snapshot at half-alpha. Phase 4d.
+	void draw_ghost(const net::ghost_state& ghost, const camera& camera);
 }
 
 #endif

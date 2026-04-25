@@ -136,19 +136,21 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 ### 4d. Ghost players (render-only)
 
-- [ ] Define `ghost_state` struct: id, pos, vel, color (rgb), name, anim_state, grapple_state
-- [ ] Add `ghost_manager` (likely owned by `instance`): `unordered_map<id, ghost_state>`
-- [ ] Implement `draw::draw_ghost(...)` with 50% alpha — does NOT enter collision world, NOT in `state.m_inputs`
-- [ ] Implement JS-callable C ABI (all `extern "C"`, prefixed `sr_`):
-  - [ ] `sr_set_local_identity(const char* name, float r, float g, float b)`
-  - [ ] `sr_load_map(const char* path)`
-  - [ ] `sr_push_ghost(const char* id, float pos_x, float pos_y, float vel_x, float vel_y, int8_t facing, uint8_t anim, uint8_t grapple_active, float gx_origin, float gy_origin, float gx_attach, float gy_attach, float g_length, uint8_t g_taut, /* color + name passed once via separate setter */)`
-  - [ ] `sr_set_ghost_identity(const char* id, const char* name, float r, float g, float b)`
-  - [ ] `sr_remove_ghost(const char* id)`
-  - [ ] `sr_get_local_snapshot(uint8_t* out_buf, size_t buf_size) -> size_t` (returns bytes written)
-  - [ ] `sr_get_player_screen_pos(const char* id, float* out_x, float* out_y) -> int` (0 = local, returns 1 if id known)
-- [ ] Render path: after local player draw, iterate ghost map, draw each at 50% alpha (+ ghost grapple if active)
-- [ ] **Exit gate**: hardcoded ghost shows up at fixed position in desktop build, follows fake snapshots
+- [x] `net::ghost_state` struct (`game/src/SR cpp/network/ghost_state.h`): name, color rgb, position, velocity, size, facing, anim, grapple state
+- [x] `net::ghost_manager` (owned by `playground`, exposed via `m_ghosts`): mutex-protected `unordered_map<string, ghost_state>` with `push/set_identity/remove/clear/snapshot`
+- [x] `draw::draw_ghost(...)` renders body + grapple line + attach marker at 50% alpha
+- [x] `net::local_identity` struct + `draw::set_local_player_color()` — JS-set color overrides hardcoded red on the local player rectangle
+- [x] JS-callable C ABI in `network/sr_api.cpp` (all `extern "C"`):
+  - [x] `sr_set_local_identity(name, r, g, b)`
+  - [x] `sr_load_map(path)` — also clears ghost map
+  - [x] `sr_push_ghost(id, pos, vel, facing, anim, grapple…)`
+  - [x] `sr_set_ghost_identity(id, name, r, g, b)`
+  - [x] `sr_remove_ghost(id)`
+  - [x] `sr_get_local_snapshot(out_buf, buf_size) -> size_t` (40-byte fixed layout)
+  - [x] `sr_get_player_screen_pos(id, out_x, out_y) -> int` (id="" or NULL = local)
+- [x] Snapshot wire layout mirrored in `packages/protocol/src/index.ts` (`SNAPSHOT_BYTES`, `SNAPSHOT_OFFSETS`) so JS encoder/decoder shares one schema
+- [x] Render path: `playground::draw` calls `set_local_player_color` (if identity set), `draw_state`, then iterates `m_ghosts.snapshot()` and `draw_ghost`s each at 50% alpha
+- [x] **Exit gate**: desktop binary still boots cleanly with the new wiring; end-to-end ghost render gets exercised in Phase 6 once JS is calling the C ABI
 
 ### 4e. Map loading via argument
 

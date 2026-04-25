@@ -1,0 +1,183 @@
+// JS-callable C ABI for the WASM build (and the desktop build, where
+// it's exercised by tests + dev tooling). All entry points are extern "C"
+// and prefixed sr_; they take only primitives + raw pointers. See
+// AGENTS.md for the full convention.
+
+#include <cstdint>
+#include <cstring>
+#include <string>
+
+#include "sr_api.h"
+#include "../instance.h"
+#include "../emulation/player.h"
+#include "../emulation/grapple.h"
+
+namespace
+{
+	instance* g_inst = nullptr;
+
+	// Snapshot wire layout (bytes). Mirrored on the JS side in
+	// packages/protocol. Bumping PROTOCOL_VERSION there must be paired
+	// with a layout change here.
+	//
+	// offset  size  field
+	// 0       4     pos_x   (float32 LE)
+	// 4       4     pos_y
+	// 8       4     vel_x
+	// 12      4     vel_y
+	// 16      1     facing  (int8: -1 / +1)
+	// 17      1     anim    (uint8 — visual state, currently always 0)
+	// 18      1     grapple_active (0/1)
+	// 19      1     grapple_taut   (0/1)
+	// 20      4     grapple_origin_x
+	// 24      4     grapple_origin_y
+	// 28      4     grapple_attach_x
+	// 32      4     grapple_attach_y
+	// 36      4     grapple_length
+	// total:  40 bytes
+	constexpr std::size_t k_snapshot_bytes = 40;
+
+	template <typename T>
+	void write_le(std::uint8_t* dst, T value)
+	{
+		std::memcpy(dst, &value, sizeof(T));
+	}
+}
+
+void net::set_active_instance(::instance* inst) { g_inst = inst; }
+::instance* net::active_instance() { return g_inst; }
+
+extern "C"
+{
+	// Set the local player's display name + RGB color (0..1). Called once
+	// after WASM startup, then never again unless the user changes it.
+	void sr_set_local_identity(const char* name, float r, float g, float b)
+	{
+		if (g_inst == nullptr || name == nullptr) return;
+		auto& id = g_inst->m_playground.m_local_identity;
+		id.name = name;
+		id.r = r;
+		id.g = g;
+		id.b = b;
+		id.is_set = true;
+	}
+
+	// Load a map from a path on the (virtual) filesystem. On the web
+	// target maps are preloaded under /maps/ via Emscripten's
+	// --preload-file; on desktop they live in game/assets/maps/.
+	void sr_load_map(const char* path)
+	{
+		if (g_inst == nullptr || path == nullptr) return;
+		g_inst->m_playground.load(std::string{ path });
+		g_inst->m_playground.m_ghosts.clear();
+	}
+
+	// Upsert a remote player snapshot. Identity (name + color) must be
+	// set separately via sr_set_ghost_identity — keeping them split lets
+	// JS push 30Hz state without re-sending the static fields.
+	void sr_push_ghost(const char* id,
+		float pos_x, float pos_y,
+		float vel_x, float vel_y,
+		std::int8_t facing, std::uint8_t anim,
+		std::uint8_t grapple_active,
+		float gx_origin, float gy_origin,
+		float gx_attach, float gy_attach,
+		float g_length, std::uint8_t g_taut)
+	{
+		if (g_inst == nullptr || id == nullptr) return;
+		g_inst->m_playground.m_ghosts.push(
+			std::string{ id },
+			emu::vector{ pos_x, pos_y },
+			emu::vector{ vel_x, vel_y },
+			facing, anim,
+			grapple_active != 0,
+			emu::vector{ gx_origin, gy_origin },
+			emu::vector{ gx_attach, gy_attach },
+			g_length, g_taut != 0);
+	}
+
+	void sr_set_ghost_identity(const char* id, const char* name, float r, float g, float b)
+	{
+		if (g_inst == nullptr || id == nullptr || name == nullptr) return;
+		g_inst->m_playground.m_ghosts.set_identity(std::string{ id }, std::string{ name }, r, g, b);
+	}
+
+	void sr_remove_ghost(const char* id)
+	{
+		if (g_inst == nullptr || id == nullptr) return;
+		g_inst->m_playground.m_ghosts.remove(std::string{ id });
+	}
+
+	// Serializes the local player's current state into out_buf. Returns
+	// the number of bytes written, or 0 if there's no player yet (e.g.
+	// before sr_load_map).
+	std::size_t sr_get_local_snapshot(std::uint8_t* out_buf, std::size_t buf_size)
+	{
+		if (g_inst == nullptr || out_buf == nullptr) return 0;
+		if (buf_size < k_snapshot_bytes) return 0;
+
+		emu::player* p = g_inst->m_playground.m_player;
+		if (p == nullptr || p->m_actor == nullptr) return 0;
+
+		const auto& a = p->m_actor->d;
+		const std::int8_t facing = (a.velocity.x >= 0.0f) ? std::int8_t{ 1 } : std::int8_t{ -1 };
+		const std::uint8_t anim = 0;
+
+		const bool g_active = (p->m_grapple != nullptr) && p->m_grapple->m_actor != nullptr
+			&& p->m_grapple->m_actor->d.is_collision_active;
+		emu::vector g_origin{ 0, 0 };
+		emu::vector g_attach{ 0, 0 };
+		float g_length = 0.0f;
+		const std::uint8_t g_taut = (g_active && p->d.is_hooked) ? 1 : 0;
+		if (g_active)
+		{
+			g_origin = p->m_grapple->m_owner->m_actor->get_collision()->get_center();
+			g_attach = p->m_grapple->get_center();
+			g_length = (g_attach - g_origin).length();
+		}
+
+		write_le(out_buf +  0, a.position.x);
+		write_le(out_buf +  4, a.position.y);
+		write_le(out_buf +  8, a.velocity.x);
+		write_le(out_buf + 12, a.velocity.y);
+		out_buf[16] = static_cast<std::uint8_t>(facing);
+		out_buf[17] = anim;
+		out_buf[18] = g_active ? 1 : 0;
+		out_buf[19] = g_taut;
+		write_le(out_buf + 20, g_origin.x);
+		write_le(out_buf + 24, g_origin.y);
+		write_le(out_buf + 28, g_attach.x);
+		write_le(out_buf + 32, g_attach.y);
+		write_le(out_buf + 36, g_length);
+		return k_snapshot_bytes;
+	}
+
+	// Returns the screen-space position of a player. id == "" or NULL
+	// means the local player. Returns 1 on success (out_x/out_y written),
+	// 0 if the player is unknown or off-screen / pre-init.
+	int sr_get_player_screen_pos(const char* id, float* out_x, float* out_y)
+	{
+		if (g_inst == nullptr || out_x == nullptr || out_y == nullptr) return 0;
+
+		const auto& cam = g_inst->m_playground.m_camera;
+
+		if (id == nullptr || id[0] == '\0')
+		{
+			emu::player* p = g_inst->m_playground.m_player;
+			if (p == nullptr || p->m_actor == nullptr) return 0;
+			const emu::vector top_left = p->m_actor->d.position - cam.position;
+			*out_x = top_left.x + p->m_actor->d.size.x * 0.5f;
+			*out_y = top_left.y;
+			return 1;
+		}
+
+		const auto snap = g_inst->m_playground.m_ghosts.snapshot();
+		auto it = snap.find(std::string{ id });
+		if (it == snap.end()) return 0;
+		const auto& gh = it->second;
+		const emu::vector top_left = gh.position - cam.position;
+		*out_x = top_left.x + gh.size.x * 0.5f;
+		*out_y = top_left.y;
+		return 1;
+	}
+}
