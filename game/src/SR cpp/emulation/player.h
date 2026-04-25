@@ -76,6 +76,12 @@ namespace emu
 			bool taunt_held{ 0 };
 			bool swap_item_held{ 0 };
 			bool was_item_held{ 0 };
+			// Buffers a jump press that arrived while sliding so the jump
+			// fires the moment slide ends (queued-input semantic). Set in
+			// player::update on rising edge of jump_held during slide;
+			// cleared inside the jump-firing block.
+			bool was_jump_held{ 0 };
+			bool queued_jump{ 0 };
 			bool slide_held{ 0 };
 			bool boost_held{ 0 };
 			bool is_hit_by_explosion{ 0 };

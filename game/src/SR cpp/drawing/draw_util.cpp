@@ -501,20 +501,6 @@ void draw::draw_actor_controller(i_actor_controller* controller, const camera& c
 
 void draw::draw_state(state* state, const camera& camera)
 {
-	float x = 64.0f + std::floor(camera.position.x / 64.0f) * 64.0f - camera.position.x;
-	while (x < camera.viewport_size.x)
-	{
-		draw::draw_line(0.8f, 0.8f, 0.8f, { x, 0.0f }, { x, camera.viewport_size.y });
-		x += 64.0f;
-	}
-
-	float y = 64.0f + std::floor(camera.position.y / 64.0f) * 64.0f - camera.position.y;
-	while (y < camera.viewport_size.y)
-	{
-		draw::draw_line(0.8f, 0.8f, 0.8f, { 0.0f, y }, { camera.viewport_size.x, y });
-		y += 64.0f;
-	}
-
 	if (state->m_collision_engine.m_level != nullptr)
 		draw_tile_layer(&(state->m_collision_engine.m_level->m_tile_layer), camera);
 	for (auto& actor : state->actors())

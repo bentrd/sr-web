@@ -126,6 +126,8 @@ void player::reset()
 	d.can_buffer_wall_jump = false;
 	d.is_in_air = false;
 	d.can_repress_jump = true;
+	d.queued_jump = false;
+	d.was_jump_held = false;
 	d.is_sliding = false;
 	d.is_stumbling = false;
 	d.is_tackled = false;
@@ -355,8 +357,22 @@ void player::update_basic(timespan time, timespan delta)
 			}
 			if (d.was_slide_cancelled && (!d.slide_held || !d.jump_held || (time - d.slide_cancel_time).seconds() > physics::slide_cancel_cooldown))
 				d.was_slide_cancelled = false;
-			if (d.jump_held && !d.is_stunned && !d.is_dying && !m_grapple->d.is_connected && (!d.is_sliding || d.jump_state < 1))
+			// Fire either a live jump_held OR a buffered press that was
+			// queued during a slide. The queued press is only consumable
+			// once the slide has ended, which matches the user-visible
+			// "jump fires when slide finishes" semantic.
+			bool jump_trigger = d.jump_held;
+			if (!d.is_sliding && d.queued_jump)
 			{
+				jump_trigger = true;
+				d.queued_jump = false;
+			}
+			if (jump_trigger && !d.is_stunned && !d.is_dying && !m_grapple->d.is_connected && (!d.is_sliding || d.jump_state < 1))
+			{
+				// Consume the buffer if a fresh press fired through the
+				// fast path — avoids a second jump on the next frame after
+				// slide ends.
+				d.queued_jump = false;
 				if (d.is_foley_slide)
 				{
 					d.is_sliding = false;
@@ -1826,6 +1842,7 @@ void player::update(timespan time, timespan delta)
 	bool was_left_held = d.left_held;
 	bool was_right_held = d.right_held;
 	bool was_item_held = d.item_held;
+	d.was_jump_held = d.jump_held;
 	d.left_held = m_actor->m_state->m_inputs[m_player_index][inp_left];
 	d.right_held = m_actor->m_state->m_inputs[m_player_index][inp_right];
 	d.jump_held = m_actor->m_state->m_inputs[m_player_index][inp_jump];
@@ -1835,14 +1852,30 @@ void player::update(timespan time, timespan delta)
 	d.item_held = m_actor->m_state->m_inputs[m_player_index][inp_item];
 	d.item_pressed = d.item_held && !was_item_held;
 	d.swap_item_held = m_actor->m_state->m_inputs[m_player_index][inp_swap_item];
+	// Buffer a jump press that arrived while sliding — the firing block
+	// further down ignores jump_held while is_sliding (when jump_state>=1),
+	// so without this the press would be silently swallowed. The flag is
+	// consumed inside the firing block once slide ends.
+	if (d.is_sliding && d.jump_held && !d.was_jump_held)
+		d.queued_jump = true;
+	// Sticky "last pressed" direction while both keys are held. The grapple
+	// firing code reads d.dominating_direction to pick its angle; making it
+	// remember the most recent press (instead of resetting to 0 the frame
+	// after the transition) means grapple keeps firing in the last-pressed
+	// direction for as long as both keys stay down. Movement in that state
+	// already cancels out via the sim's "exactly one held" gate, so the
+	// player keeps facing the originally-held direction.
 	if (d.left_held && d.right_held)
 	{
 		if (was_right_held && !was_left_held)
 			d.dominating_direction = -1;
 		else if (was_left_held && !was_right_held)
 			d.dominating_direction = 1;
-		else
-			d.dominating_direction = 0;
+		// else: keep previous d.dominating_direction (sticky last-press).
+	}
+	else
+	{
+		d.dominating_direction = 0;
 	}
 
 	if (!d.is_dying)
