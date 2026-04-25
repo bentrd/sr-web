@@ -19,9 +19,13 @@ primary_region = "cdg"
 [http_service]
   internal_port = 4000
   force_https = true
+  # Rooms live in-process. A second machine would split the cluster
+  # (friends could land on a node that doesn't know about your room),
+  # so pin to exactly one machine and disable HA.
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
+  max_machines_running = 1
 
   # WebSocket upgrade requests need the same listener as plain HTTP.
   [[http_service.checks]]
