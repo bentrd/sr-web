@@ -102,8 +102,6 @@ interface CAbi {
 	setVisualGrappleHeadSize: (size: number) => void;
 	setVisualBoostSection: (r: number, g: number, b: number, a: number) => void;
 	setVisualBoostPickup: (r: number, g: number, b: number, a: number) => void;
-	saveState: () => void;
-	loadState: () => boolean;
 }
 
 function bindCAbi(mod: SrModule): CAbi {
@@ -137,8 +135,6 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_v_grapple_head_size = mod.cwrap("sr_set_visual_grapple_head_size", null, ["number"]);
 	const f_v_boost_section = mod.cwrap("sr_set_visual_boost_section", null, ["number", "number", "number", "number"]);
 	const f_v_boost_pickup = mod.cwrap("sr_set_visual_boost_pickup", null, ["number", "number", "number", "number"]);
-	const f_save_state = mod.cwrap("sr_save_state", null, []);
-	const f_load_state = mod.cwrap("sr_load_state", "number", []);
 
 	// Persistent scratch buffers in WASM heap. Allocated once; freed on
 	// page unload. malloc/free are exported but we never hit them more
@@ -209,22 +205,12 @@ function bindCAbi(mod: SrModule): CAbi {
 		setVisualGrappleHeadSize: (size) => { f_v_grapple_head_size(size); },
 		setVisualBoostSection: (r, g, b, a) => { f_v_boost_section(r, g, b, a); },
 		setVisualBoostPickup: (r, g, b, a) => { f_v_boost_pickup(r, g, b, a); },
-		saveState: () => { f_save_state(); },
-		loadState: () => (f_load_state() as number) === 1,
 	};
 }
 
 interface HoveredLabel {
 	id: string;
 	name: string;
-	color: string;
-	x: number;
-	y: number;
-}
-
-interface SpeedLabel {
-	id: string;
-	speed: number;
 	color: string;
 	x: number;
 	y: number;
@@ -243,7 +229,7 @@ export function Game(): JSX.Element {
 	const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 	const [error, setError] = useState<string | null>(null);
 	const [hovered, setHovered] = useState<HoveredLabel | null>(null);
-	const [speedLabels, setSpeedLabels] = useState<readonly SpeedLabel[]>([]);
+	const [localSpeed, setLocalSpeed] = useState<number | null>(null);
 	const [fps, setFps] = useState<number>(0);
 	// Mouse position in canvas-local pixels (matches sr_get_player_screen_pos
 	// output). null when the cursor isn't over the canvas.
@@ -324,16 +310,12 @@ export function Game(): JSX.Element {
 		abi.setVisualBoostPickup(visuals.boostPickup[0], visuals.boostPickup[1], visuals.boostPickup[2], visuals.boostPickup[3]);
 	}, [visuals, status]);
 
-	// Reset / save / load are UI-only keys handled in JS rather than
-	// forwarded to GLFW. We share one capture-phase listener so the
-	// preventDefault → keep-out-of-game pattern only lives in one place.
+	// Reset is a UI-only key handled in JS rather than forwarded to GLFW.
+	// Capture phase so we can stopImmediatePropagation before the game's
+	// keydown listeners see it.
 	useEffect(() => {
 		if (status !== "ready") return;
-		const codes = {
-			reset: bindings.reset.code,
-			save: bindings.save_state.code,
-			load: bindings.load_state.code,
-		};
+		const resetCode = bindings.reset.code;
 		const onKey = (e: KeyboardEvent): void => {
 			const ae = document.activeElement;
 			if (ae instanceof HTMLElement &&
@@ -341,26 +323,14 @@ export function Game(): JSX.Element {
 				return;
 			}
 			const bind = eventToBinding(e);
-			if (bind === null) return;
-			const abi = abiRef.current;
-			if (!abi) return;
-			if (bind.code === codes.reset) {
-				e.preventDefault();
-				e.stopImmediatePropagation();
-				abi.resetLocal();
-			} else if (bind.code === codes.save) {
-				e.preventDefault();
-				e.stopImmediatePropagation();
-				abi.saveState();
-			} else if (bind.code === codes.load) {
-				e.preventDefault();
-				e.stopImmediatePropagation();
-				abi.loadState();
-			}
+			if (bind === null || bind.code !== resetCode) return;
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			abiRef.current?.resetLocal();
 		};
 		window.addEventListener("keydown", onKey, true);
 		return () => window.removeEventListener("keydown", onKey, true);
-	}, [status, bindings.reset.code, bindings.save_state.code, bindings.load_state.code]);
+	}, [status, bindings.reset.code]);
 
 	// Push the local snapshot at 30 Hz. Idle until the ABI is ready.
 	useEffect(() => {
@@ -529,16 +499,15 @@ export function Game(): JSX.Element {
 		}
 	}, [room, status, playerId]);
 
-	// Per-frame: hover-label hit test (cursor-only), speedometer overlay
-	// (configurable: off / local / all), and FPS readout. We resolve every
-	// player's screen-pos when either the cursor is over the canvas OR
-	// speedometers want them — sharing the loop avoids two render-rate
-	// useEffects fighting over WASM FFI calls.
-	const speedometerMode = visuals.speedometer;
+	// Per-frame: hover-label hit test (cursor-only), local-player speed
+	// readout, and FPS counter. The hover label still tracks the player's
+	// screen position (and naturally lags one frame behind the canvas), but
+	// the speedometer is a single fixed-position element so any rAF/sim
+	// timing skew can't make it visibly drift relative to the player.
+	const speedometerEnabled = visuals.speedometer !== "off";
 	useEffect(() => {
 		if (status !== "ready" || !room) return;
 		let raf = 0;
-		const ids = [...room.players.map((p) => p.id)];
 		let lastFpsUpdate = performance.now();
 		let framesSinceUpdate = 0;
 
@@ -552,78 +521,49 @@ export function Game(): JSX.Element {
 			}
 
 			const abi = abiRef.current;
-			const cursor = cursorRef.current;
-			const wantSpeed = speedometerMode !== "off";
-			const wantHover = cursor !== null;
-
-			if (!abi || (!wantSpeed && !wantHover)) {
-				if (hovered !== null) setHovered(null);
-				if (speedLabels.length !== 0) setSpeedLabels([]);
+			if (!abi) {
 				raf = requestAnimationFrame(tick);
 				return;
 			}
 
-			let bestId: string | null = null;
-			let bestDistSq = HOVER_RADIUS_SQ;
-			let bestX = 0, bestY = 0;
-			const labels: SpeedLabel[] = [];
-
-			// Local player velocity comes straight from the snapshot codec
-			// — it's the same path the network sender uses, so values match
-			// what peers see for us.
-			let localSpeed: number | null = null;
-			if (wantSpeed) {
+			// Local-player speed (rounded to int — the readout is whole-px).
+			if (speedometerEnabled) {
 				const bytes = abi.getLocalSnapshot();
 				if (bytes) {
 					const snap = decodeSnapshot(bytes);
-					if (snap) localSpeed = Math.hypot(snap.velX, snap.velY);
+					if (snap) {
+						const s = Math.round(Math.hypot(snap.velX, snap.velY));
+						setLocalSpeed((prev) => (prev === s ? prev : s));
+					}
 				}
+			} else if (localSpeed !== null) {
+				setLocalSpeed(null);
 			}
 
-			for (const id of ids) {
-				const isLocal = id === playerId;
-				const pos = abi.getPlayerScreenPos(isLocal ? "" : id);
+			// Hover hit-test only when the cursor is over the canvas.
+			const cursor = cursorRef.current;
+			if (cursor === null) {
+				if (hovered !== null) setHovered(null);
+				raf = requestAnimationFrame(tick);
+				return;
+			}
+			let bestId: string | null = null;
+			let bestDistSq = HOVER_RADIUS_SQ;
+			let bestX = 0, bestY = 0;
+			for (const p of room.players) {
+				const isLocal = p.id === playerId;
+				const pos = abi.getPlayerScreenPos(isLocal ? "" : p.id);
 				if (!pos) continue;
-
-				if (wantHover) {
-					const dx = pos.x - cursor!.x;
-					const dy = pos.y + 12 - cursor!.y;
-					const dsq = dx * dx + dy * dy;
-					if (dsq < bestDistSq) {
-						bestDistSq = dsq;
-						bestId = id;
-						bestX = pos.x;
-						bestY = pos.y;
-					}
-				}
-
-				if (wantSpeed) {
-					const includeRemote = speedometerMode === "all";
-					if (isLocal && localSpeed !== null) {
-						labels.push({
-							id,
-							speed: localSpeed,
-							color: speedColor(localSpeed),
-							x: pos.x,
-							y: pos.y,
-						});
-					} else if (!isLocal && includeRemote) {
-						const buf = ghostBuffersRef.current.get(id);
-						const last = buf?.[buf.length - 1];
-						if (last) {
-							const s = Math.hypot(last.snap.velX, last.snap.velY);
-							labels.push({
-								id,
-								speed: s,
-								color: speedColor(s),
-								x: pos.x,
-								y: pos.y,
-							});
-						}
-					}
+				const dx = pos.x - cursor.x;
+				const dy = pos.y + 12 - cursor.y;
+				const dsq = dx * dx + dy * dy;
+				if (dsq < bestDistSq) {
+					bestDistSq = dsq;
+					bestId = p.id;
+					bestX = pos.x;
+					bestY = pos.y;
 				}
 			}
-
 			if (bestId === null) {
 				if (hovered !== null) setHovered(null);
 			} else {
@@ -647,31 +587,11 @@ export function Game(): JSX.Element {
 				}
 			}
 
-			// Diff-and-set: avoid setState every frame when nothing changed
-			// (e.g. paused player). Tiny px / speed deltas would still
-			// thrash but in practice the sim moves enough each frame.
-			if (wantSpeed) {
-				const same =
-					labels.length === speedLabels.length &&
-					labels.every((l, i) => {
-						const prev = speedLabels[i]!;
-						return (
-							prev.id === l.id &&
-							Math.abs(prev.speed - l.speed) < 0.5 &&
-							Math.abs(prev.x - l.x) < 0.5 &&
-							Math.abs(prev.y - l.y) < 0.5
-						);
-					});
-				if (!same) setSpeedLabels(labels);
-			} else if (speedLabels.length !== 0) {
-				setSpeedLabels([]);
-			}
-
 			raf = requestAnimationFrame(tick);
 		};
 		raf = requestAnimationFrame(tick);
 		return () => cancelAnimationFrame(raf);
-	}, [status, room, peerInfo, playerId, hovered, speedometerMode, speedLabels]);
+	}, [status, room, peerInfo, playerId, hovered, speedometerEnabled, localSpeed]);
 
 	// Block default browser actions for game keys (space scrolling, etc).
 	useEffect(() => {
@@ -718,24 +638,17 @@ export function Game(): JSX.Element {
 				onMouseLeave={onCanvasMouseLeave}
 			/>
 			<div className="game-overlay" aria-hidden>
-				{speedLabels.map((s) => (
-					<div
-						key={s.id}
-						className="speed-label"
-						style={{
-							color: s.color,
-							transform: `translate(${s.x}px, ${s.y - 22}px) translateX(-50%)`,
-						}}
-					>
-						{Math.round(s.speed)}
+				{speedometerEnabled && localSpeed !== null && (
+					<div className="speed-readout" style={{ color: speedColor(localSpeed) }}>
+						{localSpeed}
 					</div>
-				))}
+				)}
 				{hovered && (
 					<div
 						className="player-label"
 						style={{
 							color: hovered.color,
-							transform: `translate(${hovered.x}px, ${hovered.y - 40}px) translateX(-50%)`,
+							transform: `translate(${hovered.x}px, ${hovered.y - 22}px) translateX(-50%)`,
 						}}
 					>
 						{hovered.name}

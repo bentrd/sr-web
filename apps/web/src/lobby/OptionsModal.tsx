@@ -40,9 +40,8 @@ const COLOR_FIELDS: readonly ColorField[] = [
 ] as const;
 
 const SPEEDOMETER_OPTIONS: readonly { value: SpeedometerMode; label: string; hint: string }[] = [
-	{ value: "off",   label: "Off",   hint: "Hidden" },
-	{ value: "local", label: "Self",  hint: "Above your head" },
-	{ value: "all",   label: "All",   hint: "Self + ghosts" },
+	{ value: "off", label: "Off", hint: "Hidden" },
+	{ value: "on",  label: "On",  hint: "Bottom-left readout" },
 ];
 
 export function OptionsModal({ open, onClose }: OptionsModalProps): JSX.Element | null {
@@ -139,7 +138,7 @@ export function OptionsModal({ open, onClose }: OptionsModalProps): JSX.Element 
 				<div className="visual-section">
 					<div className="visual-row-label">
 						<div>Speedometer</div>
-						<div className="visual-hint">√(vx² + vy²) above the player</div>
+						<div className="visual-hint">√(vx² + vy²) — bottom-left readout</div>
 					</div>
 					<div role="radiogroup" aria-label="Speedometer mode" className="seg-toggle">
 						{SPEEDOMETER_OPTIONS.map((opt) => (

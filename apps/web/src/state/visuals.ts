@@ -5,9 +5,9 @@
 export type ColorRgb = readonly [number, number, number];
 export type ColorRgba = readonly [number, number, number, number];
 
-// Speedometer overlay mode. 'off' hides it entirely, 'local' shows it
-// only above the local player, 'all' shows it for ghosts as well.
-export type SpeedometerMode = "off" | "local" | "all";
+// Speedometer overlay mode. 'off' hides it; 'on' shows the local
+// player's √(vx²+vy²) as a fixed bottom-left readout.
+export type SpeedometerMode = "off" | "on";
 
 export interface Visuals {
 	bg: ColorRgb;
@@ -32,7 +32,7 @@ export const VISUAL_DEFAULTS: Visuals = {
 	grappleHeadSize: 12,
 	boostSection: [0, 1, 0, 1],
 	boostPickup: [0, 1, 0, 0.1],
-	speedometer: "local",
+	speedometer: "on",
 };
 
 export const HEAD_SIZE_MIN = 1;
@@ -57,7 +57,7 @@ function isColorA(v: unknown): v is ColorRgba {
 }
 
 function isSpeedometerMode(v: unknown): v is SpeedometerMode {
-	return v === "off" || v === "local" || v === "all";
+	return v === "off" || v === "on";
 }
 
 function clampSize(n: number): number {
