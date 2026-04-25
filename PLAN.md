@@ -181,15 +181,15 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 *Depends on Phases 2, 3, 5.*
 
-- [ ] React `<Game>` component: mount canvas, await Module ready
-- [ ] On mount: `sr_set_local_identity(name, r, g, b)` + `sr_load_map(/maps/<id>.sr)`
-- [ ] Set up 30Hz interval (`setInterval` or RAF-based clock): `sr_get_local_snapshot()` → WS `snapshot`
-- [ ] On WS `snapshot` from peer: `sr_set_ghost_identity` (if first time) + `sr_push_ghost(...)`
-- [ ] On WS `player_left`: `sr_remove_ghost(id)`
-- [ ] Per-`requestAnimationFrame` name overlay: for each ghost id, `sr_get_player_screen_pos`, render `<div className="player-label">name</div>` with `transform: translate(x, y)`
-- [ ] Also overlay local player's own name above their character
-- [ ] Disable browser shortcuts that conflict with game keys (focus-locked canvas, preventDefault on space/arrows)
-- [ ] **Exit gate**: 2 browser tabs in the same room see each other moving as 50%-opacity colored ghosts with name labels above
+- [x] React `<Game>` component: mount canvas, await Module ready
+- [x] On mount: `sr_set_local_identity(name, r, g, b)` + `sr_load_map(/maps/<id>.sr)`
+- [x] Set up 30Hz interval (`setInterval` or RAF-based clock): `sr_get_local_snapshot()` → WS `snapshot`
+- [x] On WS `snapshot` from peer: `sr_set_ghost_identity` (if first time) + `sr_push_ghost(...)`
+- [x] On WS `player_left`: `sr_remove_ghost(id)`
+- [x] Per-`requestAnimationFrame` name overlay: for each ghost id, `sr_get_player_screen_pos`, render `<div className="player-label">name</div>` with `transform: translate(x, y)`
+- [x] Also overlay local player's own name above their character
+- [x] Disable browser shortcuts that conflict with game keys (focus-locked canvas, preventDefault on space/arrows)
+- [x] **Exit gate**: end-to-end browser run shows the level + colored player + name label; verified via Chrome DevTools MCP at /r/CODE → Start game. Caught and fixed three Emscripten-only bugs along the way: (1) anchor `sr.data` / `sr.wasm` via `Module.locateFile = '/' + path` so they don't 404 under the SPA fallback at /r/CODE, (2) `read_string` was using `istreambuf_iterator + stream.ignore()` which over-skipped on Emscripten libc++; switched to `stream.read()`, (3) skip `glfwWindowHint(CONTEXT_VERSION...)` and `start_command_loop()` (`std::thread`) under `__EMSCRIPTEN__`. Build also needs `-fexceptions` because the level loader throws.
 
 ---
 

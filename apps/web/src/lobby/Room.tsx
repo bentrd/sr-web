@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useApp } from "../state/AppState";
+import { Game } from "../game/Game";
 import { rgbToCss } from "./color";
 import { MAPS } from "./maps";
 
@@ -42,6 +43,24 @@ export function Room(): JSX.Element {
 				<button type="button" onClick={() => navigate("/")}>
 					Back
 				</button>
+			</main>
+		);
+	}
+
+	// Once the host starts, swap to the game view. The lobby chrome
+	// (player list, leave button) collapses into a thin top bar so the
+	// canvas owns the screen.
+	if (room.started) {
+		return (
+			<main className="game-page">
+				<header className="game-bar">
+					<span className="game-bar-room">{room.code}</span>
+					<span className="game-bar-players">{room.players.length} players</span>
+					<button type="button" onClick={() => { leaveRoom(); navigate("/"); }}>
+						Leave
+					</button>
+				</header>
+				<Game />
 			</main>
 		);
 	}

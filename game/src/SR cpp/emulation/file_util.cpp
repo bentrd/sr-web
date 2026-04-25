@@ -48,13 +48,9 @@ int32_t read_7_bit_encoded_int(std::istream& stream)
 std::string read_string(std::istream& stream)
 {
 	int length = read_7_bit_encoded_int(stream);
-	std::istreambuf_iterator<char> it{ stream };
 	std::string string(length, '\0');
 	if (length > 0)
-	{
-		std::copy_n(it, length, string.begin());
-		stream.ignore();
-	}
+		stream.read(string.data(), length);
 	return string;
 }
 

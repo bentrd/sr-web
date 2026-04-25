@@ -23,14 +23,22 @@ void instance::init()
 
 	// Request a core 3.3 context up-front so the window is created with the
 	// right profile. Forward-compat is required on macOS for any 3.x core.
+	// Emscripten talks WebGL2 (GLES 3); the desktop hints don't apply and
+	// glfwWindowHint(CONTEXT_VERSION) silently does nothing there.
+#ifndef __EMSCRIPTEN__
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
 
 	enable_drawing(true);
 
+	// stdin/std::thread don't work in single-threaded WASM, and the web
+	// build is driven entirely through sr_api anyway — there's no console.
+#ifndef __EMSCRIPTEN__
 	start_command_loop();
+#endif
 
 	add_command("getups", cmd::cmd_get_ups);
 	add_command("enabledrawing", cmd::cmd_enable_drawing);
@@ -143,7 +151,7 @@ void instance::draw()
 		return;
 
 	glClear(GL_COLOR_BUFFER_BIT);
-	
+
 	m_playground.draw(m_inputs);
 
 	glfwSwapBuffers(m_win);

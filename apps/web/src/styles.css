@@ -253,3 +253,88 @@ button.primary {
 	color: var(--muted);
 	font-size: 0.8rem;
 }
+
+/* ─── Game view ─── */
+
+.game-page {
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+}
+
+.game-bar {
+	display: flex;
+	align-items: center;
+	gap: 1rem;
+	padding: 0.5rem 0.75rem;
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-radius: 0.5rem;
+	font-size: 0.9rem;
+}
+
+.game-bar-room {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-weight: 700;
+	color: var(--accent);
+	letter-spacing: 0.15em;
+}
+
+.game-bar-players {
+	color: var(--muted);
+	flex: 1;
+}
+
+.game-root {
+	position: relative;
+	width: 1280px;
+	max-width: 100%;
+	aspect-ratio: 16 / 9;
+	border: 1px solid var(--border);
+	border-radius: 0.5rem;
+	overflow: hidden;
+	background: #fff;
+}
+
+.game-canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+	outline: none;
+}
+
+.game-overlay {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	overflow: hidden;
+}
+
+.player-label {
+	position: absolute;
+	top: 0;
+	left: 0;
+	padding: 0.1rem 0.4rem;
+	font-size: 0.75rem;
+	font-weight: 700;
+	background: rgba(0, 0, 0, 0.55);
+	border-radius: 0.25rem;
+	white-space: nowrap;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+	will-change: transform;
+}
+
+.game-status {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	background: rgba(0, 0, 0, 0.7);
+	color: var(--text);
+	font-weight: 500;
+}
+
+.game-status-error {
+	color: var(--danger);
+}

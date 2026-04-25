@@ -1,0 +1,76 @@
+// Injects the Emscripten-emitted sr.js as a regular script tag so the
+// global `createSrModule` factory becomes available, then awaits the
+// module instance with the canvas wired up. We deliberately don't ship
+// `-sEXPORT_ES6=1` because that requires Vite-side glue we don't need.
+//
+// The script is loaded once per page; subsequent calls reuse the same
+// promise. createSrModule itself can be invoked multiple times, but we
+// never need more than one game instance at a time.
+
+export interface SrModule {
+	cwrap: (
+		name: string,
+		ret: string | null,
+		args: readonly string[],
+	) => (...a: unknown[]) => unknown;
+	HEAPU8: Uint8Array;
+	HEAPF32: Float32Array;
+	stringToUTF8: (s: string, ptr: number, len: number) => void;
+	UTF8ToString: (ptr: number, len?: number) => string;
+	_malloc: (n: number) => number;
+	_free: (ptr: number) => void;
+	canvas?: HTMLCanvasElement;
+}
+
+interface ModuleOpts {
+	canvas: HTMLCanvasElement;
+	// `sr.js` requests its companion files (sr.wasm, sr.data) by relative
+	// name. The lobby lives at /r/CODE so that resolves to
+	// /r/CODE/sr.data → Vite's SPA fallback returns index.html and the
+	// file-packager silently fails. Anchor everything at /.
+	locateFile: (path: string) => string;
+}
+
+type CreateSrModule = (opts: ModuleOpts) => Promise<SrModule>;
+
+declare global {
+	interface Window {
+		createSrModule?: CreateSrModule;
+	}
+}
+
+let scriptPromise: Promise<CreateSrModule> | null = null;
+
+function loadScript(): Promise<CreateSrModule> {
+	if (scriptPromise) return scriptPromise;
+	scriptPromise = new Promise<CreateSrModule>((resolve, reject) => {
+		if (window.createSrModule) {
+			resolve(window.createSrModule);
+			return;
+		}
+		const tag = document.createElement("script");
+		tag.src = "/sr.js";
+		tag.async = true;
+		tag.onload = (): void => {
+			if (!window.createSrModule) {
+				reject(new Error("sr.js loaded but createSrModule not on window"));
+				return;
+			}
+			resolve(window.createSrModule);
+		};
+		tag.onerror = (): void => {
+			reject(new Error("Failed to load /sr.js — is build:wasm green?"));
+			scriptPromise = null;
+		};
+		document.head.appendChild(tag);
+	});
+	return scriptPromise;
+}
+
+export async function loadSrModule(canvas: HTMLCanvasElement): Promise<SrModule> {
+	const factory = await loadScript();
+	return factory({
+		canvas,
+		locateFile: (path) => `/${path}`,
+	});
+}

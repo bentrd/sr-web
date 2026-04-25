@@ -34,6 +34,7 @@ if(EMSCRIPTEN)
         -sUSE_GLFW=3
         -sFULL_ES3=1
         -sUSE_ZLIB=1
+        -fexceptions
     )
 
     # All linker-time -s flags. Emscripten requires the full -s flag list
@@ -45,6 +46,7 @@ if(EMSCRIPTEN)
         -sMAX_WEBGL_VERSION=2
         -sUSE_ZLIB=1
         -sALLOW_MEMORY_GROWTH=1
+        -fexceptions
         -sMODULARIZE=1
         -sEXPORT_NAME=createSrModule
         -sENVIRONMENT=web
