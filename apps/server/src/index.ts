@@ -134,13 +134,20 @@ const server = Bun.serve<WsData, never>({
 						});
 					}
 					const code = normaliseCode(msg.code);
+					const targetRoom = store.getRoom(code);
+					const wasMember = targetRoom?.players.has(ws.data.playerId) ?? false;
+					// Dedupe name BEFORE join — `/tp <name>` and the player list
+					// rely on names being unique per room.
+					const requestedName = msg.name.trim();
+					const finalName = targetRoom
+						? store.uniqueNameForRoom(targetRoom, requestedName, ws.data.playerId)
+						: requestedName;
 					const player = {
 						id: ws.data.playerId,
-						name: msg.name.trim(),
+						name: finalName,
 						color: msg.color,
 						ws,
 					};
-					const wasMember = store.getRoom(code)?.players.has(player.id) ?? false;
 					const result = store.joinRoom(code, player);
 					if (result === "not_found") {
 						return send(ws, {
@@ -241,6 +248,36 @@ const server = Bun.serve<WsData, never>({
 						},
 						ws.data.playerId,
 					);
+					return;
+				}
+
+				case "tp": {
+					if (!ws.data.roomCode) return;
+					const room = store.getRoom(ws.data.roomCode);
+					if (!room) return;
+					if (
+						typeof msg.target !== "string" ||
+						typeof msg.x !== "number" ||
+						typeof msg.y !== "number" ||
+						!Number.isFinite(msg.x) ||
+						!Number.isFinite(msg.y)
+					) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "tp requires { target, x, y }",
+						});
+					}
+					if (!room.players.has(msg.target)) return;
+					// Broadcast to everyone — only the target client acts on it,
+					// others get the announcement so chat can show "X tp'd Y".
+					store.broadcast(room, {
+						type: "tp",
+						target: msg.target,
+						x: msg.x,
+						y: msg.y,
+						by: ws.data.playerId,
+					});
 					return;
 				}
 

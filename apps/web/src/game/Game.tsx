@@ -89,6 +89,7 @@ interface CAbi {
 	getLocalSnapshot: () => Uint8Array | null;
 	getPlayerScreenPos: (id: string) => { x: number; y: number } | null;
 	setBinding: (action: number, glfwKey: number) => void;
+	teleportLocal: (x: number, y: number) => void;
 }
 
 function bindCAbi(mod: SrModule): CAbi {
@@ -110,6 +111,7 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_get_snap = mod.cwrap("sr_get_local_snapshot", "number", ["number", "number"]);
 	const f_get_pos = mod.cwrap("sr_get_player_screen_pos", "number", ["string", "number", "number"]);
 	const f_set_binding = mod.cwrap("sr_set_binding", null, ["number", "number"]);
+	const f_teleport = mod.cwrap("sr_teleport_local", null, ["number", "number"]);
 
 	// Persistent scratch buffers in WASM heap. Allocated once; freed on
 	// page unload. malloc/free are exported but we never hit them more
@@ -161,6 +163,9 @@ function bindCAbi(mod: SrModule): CAbi {
 		},
 		setBinding: (action, glfwKey) => {
 			f_set_binding(action, glfwKey);
+		},
+		teleportLocal: (x, y) => {
+			f_teleport(x, y);
 		},
 	};
 }
@@ -294,10 +299,52 @@ export function Game(): JSX.Element {
 					knownIdentitiesRef.current.delete(msg.id);
 					ghostBuffersRef.current.delete(msg.id);
 					return;
+				case "tp": {
+					// Only the named target acts on the teleport; everyone
+					// else just gets the announcement so chat could surface
+					// it later. We snap our local sim and clear our own
+					// ghost buffers (no stale interp samples for ourselves
+					// — though we don't render our own ghost, this is just
+					// hygiene).
+					if (msg.target === playerId) {
+						abi.teleportLocal(msg.x, msg.y);
+					}
+					return;
+				}
 			}
 		});
 		return off;
 	}, [status, ws, playerId, peerInfo]);
+
+	// Listen for chat-issued /tp commands and turn them into WS messages.
+	// We resolve destinations to world coords here so ChatPanel doesn't
+	// need to know about ghost buffers / snapshot bytes.
+	useEffect(() => {
+		if (status !== "ready") return;
+		const onCmd = (e: Event): void => {
+			const detail = (e as CustomEvent<{ target: string; destId: string }>).detail;
+			if (!detail) return;
+			const abi = abiRef.current;
+			if (!abi) return;
+
+			let dest: { x: number; y: number } | null = null;
+			if (detail.destId === playerId) {
+				const bytes = abi.getLocalSnapshot();
+				if (bytes) {
+					const s = decodeSnapshot(bytes);
+					if (s) dest = { x: s.posX, y: s.posY };
+				}
+			} else {
+				const buf = ghostBuffersRef.current.get(detail.destId);
+				const last = buf?.[buf.length - 1];
+				if (last) dest = { x: last.snap.posX, y: last.snap.posY };
+			}
+			if (!dest) return;
+			ws.send({ type: "tp", target: detail.target, x: dest.x, y: dest.y });
+		};
+		window.addEventListener("sr-cmd-tp", onCmd as EventListener);
+		return () => window.removeEventListener("sr-cmd-tp", onCmd as EventListener);
+	}, [status, ws, playerId]);
 
 	// Render-rate ghost interpolation. Runs every animation frame, walks
 	// the per-peer buffer to find the two samples bracketing

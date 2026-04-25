@@ -50,7 +50,7 @@ if(EMSCRIPTEN)
         -sMODULARIZE=1
         -sEXPORT_NAME=createSrModule
         -sENVIRONMENT=web
-        -sEXPORTED_FUNCTIONS=['_main','_sr_set_local_identity','_sr_load_map','_sr_push_ghost','_sr_set_ghost_identity','_sr_remove_ghost','_sr_get_local_snapshot','_sr_get_player_screen_pos','_sr_set_binding','_malloc','_free']
+        -sEXPORTED_FUNCTIONS=['_main','_sr_set_local_identity','_sr_load_map','_sr_push_ghost','_sr_set_ghost_identity','_sr_remove_ghost','_sr_get_local_snapshot','_sr_get_player_screen_pos','_sr_set_binding','_sr_teleport_local','_malloc','_free']
         -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','HEAPF32','stringToUTF8','UTF8ToString']
         --preload-file ${CMAKE_SOURCE_DIR}/assets/maps@/maps
     )

@@ -50,8 +50,25 @@ export class RoomStore {
 			createdAt: now,
 			lastActivityAt: now,
 		};
+		// Single-player room — name is trivially unique.
 		this.rooms.set(code, room);
 		return room;
+	}
+
+	// Pick a name that doesn't collide with anyone already in the room.
+	// `selfId` lets a returning player keep their existing name. Suffixes
+	// look like "Bob (2)", "Bob (3)", … bumping until we find a free slot.
+	uniqueNameForRoom(room: Room, requested: string, selfId: string): string {
+		const taken = new Set<string>();
+		for (const p of room.players.values()) {
+			if (p.id !== selfId) taken.add(p.name);
+		}
+		if (!taken.has(requested)) return requested;
+		for (let i = 2; i < 1000; i++) {
+			const candidate = `${requested} (${i})`;
+			if (!taken.has(candidate)) return candidate;
+		}
+		return `${requested} (${selfId.slice(2, 6)})`;
 	}
 
 	getRoom(code: string): Room | undefined {

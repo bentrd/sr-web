@@ -118,6 +118,28 @@ export type SnapshotOut = {
 };
 
 // ──────────────────────────────────────────────────────────────────────
+// Chat commands — server is a dumb relay. The requester picks the
+// destination position (usually the current world coords of some peer)
+// and the server echoes the message to everyone. The CLIENT whose
+// playerId matches `target` calls sr_teleport_local on itself.
+// ──────────────────────────────────────────────────────────────────────
+
+export type TpRequest = {
+	type: "tp";
+	target: string; // playerId of who should move
+	x: number;
+	y: number;
+};
+
+export type TpRelay = {
+	type: "tp";
+	target: string;
+	x: number;
+	y: number;
+	by: string; // playerId who issued the command
+};
+
+// ──────────────────────────────────────────────────────────────────────
 // Unions
 // ──────────────────────────────────────────────────────────────────────
 
@@ -129,7 +151,8 @@ export type ClientMsg =
 	| LeaveRoom
 	| StartGame
 	| ChatSend
-	| SnapshotIn;
+	| SnapshotIn
+	| TpRequest;
 
 // Sent once per connection right after WS open so the client knows its
 // server-assigned id (used to recognise itself in subsequent room_state
@@ -158,4 +181,5 @@ export type ServerMsg =
 	| GameStarted
 	| ChatMsg
 	| SnapshotOut
+	| TpRelay
 	| ErrorMsg;

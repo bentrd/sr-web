@@ -205,4 +205,16 @@ extern "C"
 		if (glfw_key <= 0) return;
 		input_map[static_cast<std::size_t>(action)] = glfw_key;
 	}
+
+	// Snap the local player to (x, y) in WORLD coordinates (i.e. the same
+	// space sr_get_local_snapshot writes). Velocity is preserved — set_position
+	// goes through player::set_position which handles hitbox sync. Used by
+	// the JS-side /tp chat command.
+	void sr_teleport_local(float x, float y)
+	{
+		if (g_inst == nullptr) return;
+		emu::player* p = g_inst->m_playground.m_player;
+		if (p == nullptr) return;
+		p->set_position(emu::vector{ x, y });
+	}
 }
