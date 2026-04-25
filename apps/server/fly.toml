@@ -1,7 +1,11 @@
 # Fly.io config for the snapshot-relay server.
-# Deploy from the repo root:
-#   fly launch --config apps/server/fly.toml --dockerfile apps/server/Dockerfile
-#   fly deploy --config apps/server/fly.toml --dockerfile apps/server/Dockerfile
+#
+# IMPORTANT: deploy from the REPO ROOT, not from apps/server/. The Dockerfile
+# COPYs from packages/protocol/ which is outside this directory, so the build
+# context must include the whole repo:
+#
+#   cd <repo-root>
+#   fly deploy --config apps/server/fly.toml --dockerfile apps/server/Dockerfile --remote-only
 
 app = "sr-web-server"
 primary_region = "cdg"
