@@ -28,3 +28,24 @@ export function rgbToCss(rgb: RGB, alpha = 1): string {
 		? `rgba(${r}, ${g}, ${b}, ${alpha})`
 		: `rgb(${r}, ${g}, ${b})`;
 }
+
+// Pick a random saturated, bright color so two players that don't open
+// the picker are unlikely to collide.
+export function randomColor(): RGB {
+	const h = Math.random();
+	const s = 0.75;
+	const v = 0.95;
+	const i = Math.floor(h * 6);
+	const f = h * 6 - i;
+	const p = v * (1 - s);
+	const q = v * (1 - f * s);
+	const t = v * (1 - (1 - f) * s);
+	switch (i % 6) {
+		case 0: return [v, t, p];
+		case 1: return [q, v, p];
+		case 2: return [p, v, t];
+		case 3: return [p, q, v];
+		case 4: return [t, p, v];
+		default: return [v, p, q];
+	}
+}

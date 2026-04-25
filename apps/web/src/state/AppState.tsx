@@ -9,33 +9,30 @@ import {
 } from "react";
 import type { RGB, RoomState, ServerMsg } from "@sr-web/protocol";
 import { WsClient, type WsStatus } from "../net/ws";
+import { randomColor } from "../lobby/color";
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws";
 const IDENTITY_KEY = "sr-web.identity";
 
 export type Identity = { name: string; color: RGB };
 
-const DEFAULT_IDENTITY: Identity = {
-	name: "",
-	color: [0.95, 0.4, 0.4],
-};
-
 function loadIdentity(): Identity {
 	try {
 		const raw = localStorage.getItem(IDENTITY_KEY);
-		if (!raw) return DEFAULT_IDENTITY;
-		const parsed = JSON.parse(raw) as Partial<Identity>;
-		if (
-			typeof parsed.name === "string" &&
-			Array.isArray(parsed.color) &&
-			parsed.color.length === 3
-		) {
-			return { name: parsed.name, color: parsed.color as RGB };
+		if (raw) {
+			const parsed = JSON.parse(raw) as Partial<Identity>;
+			if (
+				typeof parsed.name === "string" &&
+				Array.isArray(parsed.color) &&
+				parsed.color.length === 3
+			) {
+				return { name: parsed.name, color: parsed.color as RGB };
+			}
 		}
 	} catch {
 		// fall through
 	}
-	return DEFAULT_IDENTITY;
+	return { name: "", color: randomColor() };
 }
 
 function saveIdentity(i: Identity): void {

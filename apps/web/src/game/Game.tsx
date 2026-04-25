@@ -119,6 +119,28 @@ interface PlayerLabel {
 	visible: boolean;
 }
 
+// When labels share a screen position (e.g. spawn), stack them vertically
+// so each remains readable. Sort by id for stable ordering.
+function stackLabels(labels: readonly PlayerLabel[]): readonly (PlayerLabel & { stackOffset: number })[] {
+	const byBucket = new Map<string, PlayerLabel[]>();
+	for (const l of labels) {
+		if (!l.visible) continue;
+		const key = `${Math.round(l.x / 8)}:${Math.round(l.y / 8)}`;
+		const list = byBucket.get(key) ?? [];
+		list.push(l);
+		byBucket.set(key, list);
+	}
+	const out: (PlayerLabel & { stackOffset: number })[] = [];
+	for (const list of byBucket.values()) {
+		list.sort((a, b) => a.id.localeCompare(b.id));
+		list.forEach((l, i) => out.push({ ...l, stackOffset: i * 18 }));
+	}
+	for (const l of labels) {
+		if (!l.visible) out.push({ ...l, stackOffset: 0 });
+	}
+	return out;
+}
+
 export function Game(): JSX.Element {
 	const { ws, identity, room, playerId } = useApp();
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -299,14 +321,14 @@ export function Game(): JSX.Element {
 				onContextMenu={(e) => e.preventDefault()}
 			/>
 			<div className="game-overlay" aria-hidden>
-				{labels.map((l) =>
+				{stackLabels(labels).map((l) =>
 					l.visible ? (
 						<div
 							key={l.id}
 							className="player-label"
 							style={{
 								color: l.color,
-								transform: `translate(${l.x}px, ${l.y - 22}px) translateX(-50%)`,
+								transform: `translate(${l.x}px, ${l.y - 22 - l.stackOffset}px) translateX(-50%)`,
 							}}
 						>
 							{l.name}
