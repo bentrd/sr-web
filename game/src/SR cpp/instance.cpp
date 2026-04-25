@@ -47,28 +47,44 @@ void instance::run(const std::string& map_path)
 {
 	m_playground.load(map_path);
 
-	while (true)
+	while (!should_close())
+		tick_frame();
+}
+
+void instance::tick_frame()
+{
+	auto now = std::chrono::high_resolution_clock::now();
+	emu::timespan delta = (now - m_update_start).count() / 100ull;
+	m_update_start = now;
+
+	while (now - m_last_ups_t >= std::chrono::seconds(1))
 	{
-		auto now = std::chrono::high_resolution_clock::now();
-		emu::timespan delta = (now - m_update_start).count() / 100ull;
-		m_update_start = now;
-
-		while (now - m_last_ups_t >= std::chrono::seconds(1))
-		{
-			m_last_ups_t += std::chrono::seconds(1);
-			m_ups = m_updates;
-			m_updates = 0;
-		}
-
-		update_input();
-		update(delta);
-		draw();
-
-		if (m_drawing_enabled)
-			limit_rate(300);
-
-		m_updates++;
+		m_last_ups_t += std::chrono::seconds(1);
+		m_ups = m_updates;
+		m_updates = 0;
 	}
+
+	update_input();
+	update(delta);
+	draw();
+
+	// limit_rate is a busy-wait — only useful on desktop. The web build
+	// is driven at monitor refresh by emscripten_set_main_loop_arg(0, ...).
+#ifndef __EMSCRIPTEN__
+	if (m_drawing_enabled)
+		limit_rate(300);
+#endif
+
+	m_updates++;
+}
+
+bool instance::should_close() const
+{
+	// Original SR-cpp behavior is `while(true)` — closing the window flips
+	// drawing off but the command loop keeps accepting stdin. We preserve
+	// that here. The web target uses emscripten_set_main_loop (no while
+	// loop at all), so this is desktop-only.
+	return false;
 }
 
 void instance::update(emu::timespan delta)

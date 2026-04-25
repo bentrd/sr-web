@@ -129,10 +129,10 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 ### 4c. Tickable main loop
 
-- [ ] Extract `instance::tick_frame()` from `instance::run()`
-- [ ] Desktop entry calls `while (!glfwWindowShouldClose(...)) inst.tick_frame();`
-- [ ] Confirm the 300Hz sim accumulator + monitor-rate render decoupling is preserved
-- [ ] **Exit gate**: desktop behavior unchanged from before refactor
+- [x] Extract `instance::tick_frame()` from `instance::run()`
+- [x] Desktop entry: `run(map_path)` calls `while(!should_close()) tick_frame();`
+- [x] `limit_rate(300)` busy-wait gated `#ifndef __EMSCRIPTEN__` — web build will be driven at monitor refresh by `emscripten_set_main_loop_arg(0, ...)` instead
+- [x] **Exit gate**: desktop behavior unchanged from before refactor (smoke test still boots and renders cleanly)
 
 ### 4d. Ghost players (render-only)
 

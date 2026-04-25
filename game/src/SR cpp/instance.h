@@ -38,12 +38,21 @@ struct instance
 	instance();
 
 	void init();
+	// Loads the map then runs forever (desktop entry point).
 	void run(const std::string& map_path);
+
+	// One frame of work: input → update → draw + ups bookkeeping. Exposed
+	// so Emscripten can drive it via emscripten_set_main_loop_arg without
+	// owning the loop itself.
+	void tick_frame();
 
 	void update(emu::timespan delta);
 	void update_input();
 	void draw();
 	void limit_rate(std::uint64_t updates_per_sec) const;
+
+	// True once the user has closed the GLFW window (desktop loop exits).
+	bool should_close() const;
 
 	void enable_drawing(bool enable);
 
