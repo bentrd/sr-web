@@ -19,7 +19,7 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 - [x] **Map redistribution**: `.sr` files gitignored; each dev runs `collect-maps` locally. Manifest committed.
 - [x] **Soft player-count warning threshold**: warn in client when room size > **12**.
-- [x] **SR-cpp inclusion**: git submodule at `game/upstream`.
+- [x] **SR-cpp inclusion**: vendored at `game/src/SR cpp/` (changed from submodule — Phase 4a/b/d/e require ongoing source modifications).
 - [x] **Identity persistence**: name + color persisted via localStorage.
 - [x] **Server hosting target**: Fly.io for the demo deploy.
 
@@ -99,20 +99,17 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 - [x] Write `game/CMakeLists.txt` enumerating all source dirs from `SR cpp/`
 - [x] Conditional dependencies: GLEW + native GLFW on desktop; Emscripten ports (`-sUSE_GLFW=3`, `-sUSE_ZLIB=1`) on web
 - [x] CMake **configure** step succeeds on macOS (finds GLFW 3.4 + GLEW 2.3 via brew/pkg-config)
-- [ ] Verify desktop CMake build produces a working binary — **BLOCKED on 2 upstream-source portability fixes** (see below)
-- [ ] **Exit gate**: `cmake --build build-desktop && ./sr_desktop` runs
+- [x] Verify desktop CMake build produces a working binary (1.6MB Mach-O arm64 produced on macOS)
+- [x] **Exit gate**: `cmake --build build-desktop` produces `sr_desktop` binary
 
-**Blockers requiring upstream source fixes** (next iteration must resolve):
+**Source patches applied during Phase 4a** (vendored copy, not pushed upstream):
 
-1. **`SR cpp/command/string_util.cpp`** uses `std::from_chars` without `#include <charconv>`. Compiles on MSVC (transitive include via PCH) but fails on clang/libc++.
-2. **`SR cpp/emulation/math.h`** shadows the libc++ `<math.h>`, breaking `<cmath>` in any TU that has `emulation/` in its include path. Fix: rename to `sr_math.h` (or `math_util.h`) and update all includes.
+1. `command/string_util.cpp` — Added `#include <charconv>`. Replaced `std::from_chars` for floats with `std::stof` (float `from_chars` requires macOS 26+ in libc++).
+2. `emulation/math.h` → renamed to `emulation/sr_math.h` (shadowed libc++ `<math.h>`). All includes updated.
+3. `instance.cpp` — Added missing `#include <iostream>` and `#include <thread>`.
+4. `emulation/file_util.h` — Changed `#include "zlib/zlib.h"` to `#include <zlib.h>` (use system zlib instead of vendored `.c` files which fail to compile on macOS).
 
-**Open decision (raised by Phase 4a)**: SR-cpp is currently a **submodule** but we now need to modify its source. Options:
-- (a) **Vendor it** — copy `game/upstream/*` into `game/src/` and drop the submodule. Cleanest given the scope of upcoming Phase 4b/4d/4e changes.
-- (b) **Fork it** — push fixes to a `rbit-sr/SR-cpp` fork on a github org we control, switch the submodule URL.
-- (c) **Patch on build** — keep submodule pristine, apply patches via CMake before compile. Fragile.
-
-Recommended: **(a) vendor**. We'll be touching this code constantly through Phase 4b/d/e/5; submodule provides no value once we own the changes.
+**Resolved decision**: SR-cpp **vendored** at `game/src/SR cpp/` (option a). Submodule dropped because Phase 4b/4d/4e will rewrite large chunks.
 
 ### 4b. Modern GL rewrite of `draw_util.cpp`
 

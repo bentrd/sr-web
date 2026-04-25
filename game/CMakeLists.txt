@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(sr-game CXX)
+project(sr-game C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,45 +18,30 @@ if(EMSCRIPTEN)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --preload-file game/assets/maps@/maps")
 else()
     # Desktop (native) build - macOS and Windows support
-    if(APPLE)
-        # macOS: use brew-installed GLFW and GLEW via pkg-config
-        # Use pkg_check_modules without IMPORTED_TARGET to avoid -isystem flags
-        # that interfere with C++ standard library header path ordering
-        pkg_check_modules(GLFW REQUIRED glfw3)
-        pkg_check_modules(GLEW REQUIRED glew)
-    else()
-        # Windows: could use system/vcpkg packages or bundled headers in upstream/include/
-        # For now, assume GLFW/GLEW are available system-wide
-        pkg_check_modules(GLFW REQUIRED glfw3)
-        pkg_check_modules(GLEW REQUIRED glew)
-    endif()
+    pkg_check_modules(GLFW REQUIRED glfw3)
+    pkg_check_modules(GLEW REQUIRED glew)
+    find_package(ZLIB REQUIRED)
 endif()
 
-# Source directories - all .cpp files from the SR cpp directory
-set(SR_CPP_ROOT "${CMAKE_SOURCE_DIR}/upstream/SR cpp")
+# SR-cpp is vendored under game/src/ (was a submodule originally; we own
+# the source now because Phase 4b will rewrite a chunk of it).
+set(SR_CPP_ROOT "${CMAKE_SOURCE_DIR}/src/SR cpp")
 
-# Collect all .cpp files recursively
-file(GLOB_RECURSE SR_SOURCES
-    "${SR_CPP_ROOT}/*.cpp"
-)
-
-# Exclude zlib .c files from the main source list (we'll handle them separately)
-list(FILTER SR_SOURCES EXCLUDE REGEX "emulation/zlib/.*\\.c$")
-
-# Vendored zlib sources
-file(GLOB ZLIB_SOURCES "${SR_CPP_ROOT}/emulation/zlib/*.c")
-
-# All C++ sources for the game
-set(GAME_SOURCES ${SR_SOURCES} ${ZLIB_SOURCES})
+# Collect all .cpp files recursively. We deliberately ignore the vendored
+# zlib (.c files in emulation/zlib/) because:
+#   - macOS / Linux ship a system zlib that's a perfect drop-in
+#   - Emscripten's `-sUSE_ZLIB=1` provides one for the web build
+#   - The vendored copy expects Windows-style POSIX headers that don't
+#     compile cleanly on macOS without invasive patches
+file(GLOB_RECURSE SR_SOURCES "${SR_CPP_ROOT}/*.cpp")
+set(GAME_SOURCES ${SR_SOURCES})
 
 # Create the executable target
 add_executable(sr_desktop ${GAME_SOURCES})
 
-# Include directories
-# Note: we do NOT include "${CMAKE_SOURCE_DIR}/upstream/include" because that contains
-# Windows-specific vendored GLFW/GLEW headers. On macOS, we use system GLFW/GLEW instead.
-# Note: the emulation directory contains a custom math.h that conflicts with <cmath>.
-# We use SYSTEM visibility so it's treated as a system include (lower priority).
+# Include directories.
+# We deliberately exclude `src/include/` (vendored Windows GLFW/GLEW headers) —
+# brew-installed system copies are used instead.
 target_include_directories(sr_desktop PRIVATE
     "${SR_CPP_ROOT}"
     "${SR_CPP_ROOT}/emulation"
@@ -64,11 +49,6 @@ target_include_directories(sr_desktop PRIVATE
     "${SR_CPP_ROOT}/drawing"
     "${SR_CPP_ROOT}/command"
     "${SR_CPP_ROOT}/utility"
-)
-
-# Mark emulation directory as system include to prevent it from shadowing C++ stdlib headers
-set_target_properties(sr_desktop PROPERTIES
-    CXX_SYSTEM_INCLUDE_DIRECTORIES "${SR_CPP_ROOT}/emulation"
 )
 
 # Add GLFW/GLEW include directories (from pkg-config) on non-Emscripten builds
@@ -80,23 +60,24 @@ if(NOT EMSCRIPTEN)
     endif()
 endif()
 
-# zlib sources include their own headers relative to emulation/zlib directory
-# We add it as system include only for the zlib compilation units
-set_source_files_properties(${ZLIB_SOURCES} PROPERTIES
-    COMPILE_FLAGS "-isystem${SR_CPP_ROOT}/emulation"
-)
-
 # Link libraries based on platform
 if(EMSCRIPTEN)
     # Emscripten handles linking via compiler flags
     target_link_libraries(sr_desktop)
 else()
     if(APPLE)
-        # macOS: link to brew-installed GLFW, GLEW, and native OpenGL frameworks
+        # macOS: link to brew-installed GLFW, GLEW, and native OpenGL frameworks.
+        # pkg_check_modules without IMPORTED_TARGET gives us names + dirs as
+        # separate variables — both are needed for the linker.
+        target_link_directories(sr_desktop PRIVATE
+            ${GLFW_LIBRARY_DIRS}
+            ${GLEW_LIBRARY_DIRS}
+        )
         target_link_libraries(sr_desktop
             PRIVATE
             ${GLFW_LIBRARIES}
             ${GLEW_LIBRARIES}
+            ZLIB::ZLIB
             "-framework OpenGL"
             "-framework Cocoa"
             "-framework IOKit"
@@ -108,6 +89,7 @@ else()
             PRIVATE
             ${GLFW_LIBRARIES}
             ${GLEW_LIBRARIES}
+            ZLIB::ZLIB
             OpenGL::OpenGL
         )
     endif()

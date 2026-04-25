@@ -1,3 +1,0 @@
-[submodule "game/upstream"]
-	path = game/upstream
-	url = https://github.com/rbit-sr/SR-cpp.git

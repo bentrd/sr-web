@@ -117,7 +117,8 @@ sr-web/
 ├── packages/
 │   └── protocol/               # Shared TS message types (source of truth)
 ├── game/
-│   ├── upstream/               # SR-cpp submodule
+│   ├── src/SR cpp/             # Vendored SR-cpp source (formerly a submodule;
+│   │                           # vendored because we modify it heavily)
 │   ├── CMakeLists.txt          # New build (NOT a replacement for the .sln)
 │   ├── platform/
 │   │   ├── desktop_main.cpp

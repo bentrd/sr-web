@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Command\command.h" />
+    <ClInclude Include="Command\command_functions.h" />
+    <ClInclude Include="Command\string_util.h" />
+    <ClInclude Include="Drawing\camera.h" />
+    <ClInclude Include="emulation\boost_section.h" />
+    <ClInclude Include="Emulation\common.h" />
+    <ClInclude Include="Drawing\draw_util.h" />
+    <ClInclude Include="Emulation\aabb.h" />
+    <ClInclude Include="Emulation\actor.h" />
+    <ClInclude Include="Emulation\caches.h" />
+    <ClInclude Include="Emulation\collision_engine.h" />
+    <ClInclude Include="Emulation\collision_filter.h" />
+    <ClInclude Include="Emulation\collision_pair.h" />
+    <ClInclude Include="Emulation\collidable_type.h" />
+    <ClInclude Include="Emulation\collision_utils.h" />
+    <ClInclude Include="emulation\config.h" />
+    <ClInclude Include="Emulation\convex_polygon.h" />
+    <ClInclude Include="Emulation\editable_actor.h" />
+    <ClInclude Include="Emulation\encrypted_float.h" />
+    <ClInclude Include="Emulation\file_util.h" />
+    <ClInclude Include="Emulation\grapple.h" />
+    <ClInclude Include="Emulation\input.h" />
+    <ClInclude Include="Emulation\interfaces.h" />
+    <ClInclude Include="Emulation\level.h" />
+    <ClInclude Include="Emulation\line_trace.h" />
+    <ClInclude Include="Emulation\math.h" />
+    <ClInclude Include="emulation\obstacle.h" />
+    <ClInclude Include="Emulation\physics_constants.h" />
+    <ClInclude Include="Emulation\player.h" />
+    <ClInclude Include="Emulation\quad_tree_node.h" />
+    <ClInclude Include="Emulation\player_start.h" />
+    <ClInclude Include="emulation\resizable_editable_actor.h" />
+    <ClInclude Include="Emulation\state.h" />
+    <ClInclude Include="emulation\super_boost_volume.h" />
+    <ClInclude Include="Emulation\tile_actor.h" />
+    <ClInclude Include="Emulation\tile_layer_base.h" />
+    <ClInclude Include="Emulation\timespan.h" />
+    <ClInclude Include="Emulation\trace_line_actor.h" />
+    <ClInclude Include="Emulation\trace_polygon_actor.h" />
+    <ClInclude Include="emulation\utility\dyn_array.h" />
+    <ClInclude Include="Emulation\vector.h" />
+    <ClInclude Include="Emulation\zlib\crc32.h" />
+    <ClInclude Include="Emulation\zlib\deflate.h" />
+    <ClInclude Include="Emulation\zlib\gzguts.h" />
+    <ClInclude Include="Emulation\zlib\inffast.h" />
+    <ClInclude Include="Emulation\zlib\inffixed.h" />
+    <ClInclude Include="Emulation\zlib\inflate.h" />
+    <ClInclude Include="Emulation\zlib\inftrees.h" />
+    <ClInclude Include="Emulation\zlib\trees.h" />
+    <ClInclude Include="Emulation\zlib\zconf.h" />
+    <ClInclude Include="Emulation\zlib\zlib.h" />
+    <ClInclude Include="Emulation\zlib\zutil.h" />
+    <ClInclude Include="input_handler.h" />
+    <ClInclude Include="instance.h" />
+    <ClInclude Include="playground.h" />
+    <ClInclude Include="Utility\event.h" />
+    <ClInclude Include="Utility\graph.h" />
+    <ClInclude Include="Utility\level_preprocessing.h" />
+    <ClInclude Include="Utility\trajectory_prediction.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Command\command.cpp" />
+    <ClCompile Include="Command\command_functions.cpp" />
+    <ClCompile Include="Command\string_util.cpp" />
+    <ClCompile Include="Drawing\camera.cpp" />
+    <ClCompile Include="Drawing\draw_util.cpp" />
+    <ClCompile Include="Emulation\aabb.cpp" />
+    <ClCompile Include="Emulation\actor.cpp" />
+    <ClCompile Include="emulation\boost_section.cpp" />
+    <ClCompile Include="Emulation\caches.cpp" />
+    <ClCompile Include="Emulation\collision_engine.cpp" />
+    <ClCompile Include="Emulation\collision_filter.cpp" />
+    <ClCompile Include="Emulation\collision_optimization.cpp" />
+    <ClCompile Include="Emulation\collision_pair.cpp" />
+    <ClCompile Include="Emulation\collision_utils.cpp" />
+    <ClCompile Include="emulation\collision_utils_templates.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="Emulation\convex_polygon.cpp" />
+    <ClCompile Include="Emulation\editable_actor.cpp" />
+    <ClCompile Include="Emulation\encrypted_float.cpp" />
+    <ClCompile Include="Emulation\file_util.cpp" />
+    <ClCompile Include="Emulation\grapple.cpp" />
+    <ClCompile Include="Emulation\level.cpp" />
+    <ClCompile Include="Emulation\line_trace.cpp" />
+    <ClCompile Include="Emulation\math.cpp" />
+    <ClCompile Include="emulation\obstacle.cpp" />
+    <ClCompile Include="Emulation\player.cpp" />
+    <ClCompile Include="Emulation\quad_tree_node.cpp" />
+    <ClCompile Include="Emulation\player_start.cpp" />
+    <ClCompile Include="emulation\resizable_editable_actor.cpp" />
+    <ClCompile Include="Emulation\state.cpp" />
+    <ClCompile Include="emulation\super_boost_volume.cpp" />
+    <ClCompile Include="Emulation\tile_actor.cpp" />
+    <ClCompile Include="Emulation\tile_layer_base.cpp" />
+    <ClCompile Include="Emulation\timespan.cpp" />
+    <ClCompile Include="Emulation\trace_line_actor.cpp" />
+    <ClCompile Include="Emulation\trace_polygon_actor.cpp" />
+    <ClCompile Include="Emulation\vector.cpp" />
+    <ClCompile Include="Emulation\zlib\adler32.c" />
+    <ClCompile Include="Emulation\zlib\compress.c" />
+    <ClCompile Include="Emulation\zlib\crc32.c" />
+    <ClCompile Include="Emulation\zlib\deflate.c" />
+    <ClCompile Include="Emulation\zlib\gzclose.c" />
+    <ClCompile Include="Emulation\zlib\gzlib.c" />
+    <ClCompile Include="Emulation\zlib\gzread.c" />
+    <ClCompile Include="Emulation\zlib\gzwrite.c" />
+    <ClCompile Include="Emulation\zlib\infback.c" />
+    <ClCompile Include="Emulation\zlib\inffast.c" />
+    <ClCompile Include="Emulation\zlib\inflate.c" />
+    <ClCompile Include="Emulation\zlib\inftrees.c" />
+    <ClCompile Include="Emulation\zlib\trees.c" />
+    <ClCompile Include="Emulation\zlib\uncompr.c" />
+    <ClCompile Include="Emulation\zlib\zutil.c" />
+    <ClCompile Include="input_handler.cpp" />
+    <ClCompile Include="instance.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="playground.cpp" />
+    <ClCompile Include="Utility\event.cpp" />
+    <ClCompile Include="Utility\level_preprocessing.cpp" />
+    <ClCompile Include="Utility\trajectory_prediction.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="emulation\collision_engine_templates.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <FileType>Document</FileType>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{832d666e-7c99-4d92-8af8-ceb30d7842e9}</ProjectGuid>
+    <RootNamespace>SRcpp</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <EnableASAN>false</EnableASAN>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <EnableASAN>false</EnableASAN>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)lib-vc2022-32;$(SolutionDir)lib\Release\Win32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>glfw3.lib;opengl32.lib;glew32.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)lib-vc2022-32;$(SolutionDir)lib\Release\Win32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>glfw3.lib;opengl32.lib;glew32.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)lib-vc2022;$(SolutionDir)lib\Release\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>glfw3.lib;opengl32.lib;glew32.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <Optimization>MaxSpeed</Optimization>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)lib-vc2022;$(SolutionDir)lib\Release\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>glfw3.lib;opengl32.lib;glew32.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
