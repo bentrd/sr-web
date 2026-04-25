@@ -67,7 +67,12 @@ export function Room(): JSX.Element {
 	}
 
 	async function handleCopyLink(): Promise<void> {
-		const url = `${window.location.origin}/r/${room?.code ?? ""}`;
+		// HashRouter encodes routes after `#`, and the app may be served
+		// from a sub-path (e.g. /sr-web/) on GitHub Pages. Build the URL
+		// from the current document so both work.
+		const { origin, pathname } = window.location;
+		const base = pathname.split("#")[0]?.replace(/index\.html$/, "") ?? "/";
+		const url = `${origin}${base}#/r/${room?.code ?? ""}`;
 		try {
 			await navigator.clipboard.writeText(url);
 			setCopyState("copied");
