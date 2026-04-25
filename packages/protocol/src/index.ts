@@ -84,11 +84,30 @@ export type ClientMsg =
 	| StartGame
 	| SnapshotIn;
 
+// Sent once per connection right after WS open so the client knows its
+// server-assigned id (used to recognise itself in subsequent room_state
+// broadcasts).
+export type Welcome = { type: "welcome"; playerId: string };
+
+export type ErrorMsg = {
+	type: "error";
+	code:
+		| "bad_json"
+		| "unimplemented"
+		| "room_not_found"
+		| "room_already_started"
+		| "not_in_room"
+		| "not_host"
+		| "validation";
+	message: string;
+};
+
 export type ServerMsg =
 	| ServerHello
+	| Welcome
 	| RoomState
 	| PlayerJoined
 	| PlayerLeft
 	| GameStarted
 	| SnapshotOut
-	| { type: "error"; code: string; message: string };
+	| ErrorMsg;

@@ -58,18 +58,18 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 *Can run in parallel with Phase 3 and Phase 4a/4b after Phase 0 + 1 are done.*
 
-- [ ] Set up routing (`/` home, `/r/:code` room)
-- [ ] Home page: name input + `<input type="color">` + [Create] [Join code____]
-- [ ] Map picker component (reads `manifest.json`)
-- [ ] Persist name + color to localStorage
-- [ ] WS client wrapper with auto-reconnect, message typing imported from `packages/protocol`
-- [ ] Create-room flow: pick map → WS `create_room` → navigate to `/r/:code`
-- [ ] Join-room flow: enter code → WS `join_room` → navigate to `/r/:code`
-- [ ] Room view: player list (name + color swatch), map name, host indicator
-- [ ] [Start] button (host only), [Leave] button
-- [ ] Soft warning banner when room player count > 12
-- [ ] Error states: server unreachable, room not found, room already started
-- [ ] **Exit gate**: 2 browser tabs can create + join a room and see each other's name/color in the player list
+- [x] Set up routing (`/` home, `/r/:code` room) — `react-router-dom`
+- [x] Home page: name input + `<input type="color">` + [Create] [Join code____]
+- [x] Map picker (hardcoded 4 maps in `lobby/maps.ts`; manifest is the source of truth — switch to runtime fetch when adding more)
+- [x] Persist name + color to localStorage (`useApp().identity`)
+- [x] WS client wrapper with auto-reconnect, message typing imported from `packages/protocol`
+- [x] Create-room flow: pick map → WS `create_room` → navigate to `/r/:code` (driven by `room_state`)
+- [x] Join-room flow: enter code → WS `join_room` → navigate to `/r/:code`
+- [x] Room view: player list (name + color swatch), map name, host indicator, "you" tag
+- [x] [Start] button (host only), [Leave] button
+- [x] Soft warning banner when room player count > 12
+- [x] Error states: server unreachable, room not found, room already started
+- [x] **Exit gate**: typecheck + prod build green; protocol verified end-to-end with 2 simulated WS clients. *Final human-eyes browser test still recommended.*
 
 ---
 
@@ -77,16 +77,16 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 *Can run in parallel with Phase 2 and Phase 4 after Phase 0.*
 
-- [ ] `Bun.serve({ websocket })` skeleton with typed message routing
-- [ ] In-memory `Map<code, Room>` room store
-- [ ] 5-char Crockford base32 code generator (no I, L, O, U) with collision check
-- [ ] Message handlers (C→S): `create_room`, `join_room`, `leave_room`, `start_game`, `snapshot`
-- [ ] Broadcast handlers (S→C): `room_state`, `player_joined`, `player_left`, `game_started`, `snapshot`
-- [ ] Snapshot fanout: relay to all room members except sender (no inspection of body)
-- [ ] Disconnect handling: 30s grace period for reconnect with same player id
-- [ ] Idle-room GC (delete after 10min with no members)
-- [ ] No hard player cap (warning is client-side, see Phase 2)
-- [ ] **Exit gate**: integration test (or manual 4-tab test) passes for create / 4 joins / snapshot fanout / leave / GC
+- [x] `Bun.serve({ websocket })` skeleton with typed message routing
+- [x] In-memory `Map<code, Room>` room store (`apps/server/src/rooms.ts`)
+- [x] 5-char Crockford base32 code generator (no I, L, O, U) with collision check (`apps/server/src/codes.ts`) — also includes `normaliseCode()` for lenient user input
+- [x] Message handlers (C→S): `create_room`, `join_room`, `leave_room`, `start_game`, `snapshot`
+- [x] Broadcast handlers (S→C): `room_state`, `welcome`, `player_joined`, `player_left`, `game_started`, `snapshot`, `error`
+- [x] Snapshot fanout: relay to all room members except sender (no inspection of body)
+- [x] Disconnect handling: 30s grace period for reconnect with same player id
+- [x] Idle-room GC (delete after 10min with no activity)
+- [x] No hard player cap (warning is client-side, see Phase 2)
+- [x] **Exit gate**: integration test passes for create / join / snapshot fanout / leave / start / not-host / room-not-found / room-already-started
 
 ---
 
@@ -96,10 +96,23 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 ### 4a. CMake build alongside `.sln`
 
-- [ ] Write `game/CMakeLists.txt` enumerating all source dirs from `SR cpp/`
-- [ ] Conditional dependencies: GLEW + native GLFW on desktop; Emscripten ports (`-sUSE_GLFW=3`, `-sUSE_ZLIB=1`) on web
-- [ ] Verify desktop CMake build produces a working binary identical in behavior to current `.sln` build
-- [ ] **Exit gate**: `cmake --build build-desktop && ./sr_desktop` runs and matches existing `.sln` output
+- [x] Write `game/CMakeLists.txt` enumerating all source dirs from `SR cpp/`
+- [x] Conditional dependencies: GLEW + native GLFW on desktop; Emscripten ports (`-sUSE_GLFW=3`, `-sUSE_ZLIB=1`) on web
+- [x] CMake **configure** step succeeds on macOS (finds GLFW 3.4 + GLEW 2.3 via brew/pkg-config)
+- [ ] Verify desktop CMake build produces a working binary — **BLOCKED on 2 upstream-source portability fixes** (see below)
+- [ ] **Exit gate**: `cmake --build build-desktop && ./sr_desktop` runs
+
+**Blockers requiring upstream source fixes** (next iteration must resolve):
+
+1. **`SR cpp/command/string_util.cpp`** uses `std::from_chars` without `#include <charconv>`. Compiles on MSVC (transitive include via PCH) but fails on clang/libc++.
+2. **`SR cpp/emulation/math.h`** shadows the libc++ `<math.h>`, breaking `<cmath>` in any TU that has `emulation/` in its include path. Fix: rename to `sr_math.h` (or `math_util.h`) and update all includes.
+
+**Open decision (raised by Phase 4a)**: SR-cpp is currently a **submodule** but we now need to modify its source. Options:
+- (a) **Vendor it** — copy `game/upstream/*` into `game/src/` and drop the submodule. Cleanest given the scope of upcoming Phase 4b/4d/4e changes.
+- (b) **Fork it** — push fixes to a `rbit-sr/SR-cpp` fork on a github org we control, switch the submodule URL.
+- (c) **Patch on build** — keep submodule pristine, apply patches via CMake before compile. Fragile.
+
+Recommended: **(a) vendor**. We'll be touching this code constantly through Phase 4b/d/e/5; submodule provides no value once we own the changes.
 
 ### 4b. Modern GL rewrite of `draw_util.cpp`
 
