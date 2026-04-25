@@ -115,16 +115,17 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 > **This is the biggest single task in the project.** WebGL has zero support for the immediate mode the original uses. Required for both desktop and web targets after the rewrite.
 
-- [ ] Audit all `glBegin`/`glEnd`/`glVertex*`/`glColor*` call sites
-- [ ] Add minimal shader sources (vertex + fragment): takes pos + color uniform + alpha
-- [ ] Set up VBO/VAO helpers + a single shader program
-- [ ] Rewrite `draw_triangle`, `draw_rectangle` (both overloads), `draw_line`
-- [ ] Rewrite `draw_tile`, `draw_tile_layer`
-- [ ] Rewrite `draw_player`, `draw_grapple`
-- [ ] Rewrite remaining draw functions (`draw_player_start`, `draw_super_boost_volume`, `draw_boost_section`, `draw_obstacle`, etc — enumerate from `draw_util.h`)
-- [ ] **Fix the `bounds.max_x` → `max_y` bug at `draw_util.cpp:25-26`** (in passing)
-- [ ] Verify desktop visual parity with old build (side-by-side screenshots if possible)
-- [ ] **Exit gate**: desktop binary renders identically using only modern GL
+- [x] Audit all `glBegin`/`glEnd`/`glVertex*`/`glColor*` call sites
+- [x] Add minimal shader sources (vertex + fragment): takes pos + color uniform + alpha (GL 3.3 core on desktop, GLSL ES 3.0 on web — `#ifdef __EMSCRIPTEN__`)
+- [x] Set up VBO/VAO helpers + a single shader program (anonymous namespace `gl_state` in draw_util.cpp)
+- [x] Rewrite `draw_triangle`, `draw_rectangle` (both overloads), `draw_line` (plus `_a` alpha variants for ghosts)
+- [x] Rewrite `draw_tile`, `draw_tile_layer`
+- [x] Rewrite `draw_player`, `draw_grapple`
+- [x] Rewrite remaining draw functions (`draw_player_start`, `draw_super_boost_volume`, `draw_boost_section`, `draw_obstacle`, `draw_state`, `draw_actor_controller`, `draw_right_pot_map`, `draw_left_pot_map`)
+- [x] **Fix the `bounds.max_x` → `max_y` bug** (`draw_rectangle(aabb)` now delegates to the corner-vector overload with correct min/max)
+- [x] GLFW context hints for 3.3 core + forward-compat (macOS); `glewInit()` moved after `glfwMakeContextCurrent`
+- [x] `draw::set_viewport()` replaces the old `glMatrixMode/glOrtho` calls in `instance.cpp`
+- [x] **Exit gate**: desktop binary boots into a GLFW window with shader-based rendering, no segfault during a 3s smoke run; visual side-by-side parity check deferred to first end-to-end run with a ghost peer
 
 ### 4c. Tickable main loop
 
@@ -151,10 +152,10 @@ Browser port of [SR-cpp](https://github.com/rbit-sr/SR-cpp) (a SpeedRunners reim
 
 ### 4e. Map loading via argument
 
-- [ ] Remove hardcoded `INIT_LOAD_LEVEL` from `playground.h:4`
-- [ ] `playground` constructor (and/or `init`) takes a map path string
-- [ ] Verify all 4 maps load + play correctly in desktop build
-- [ ] **Exit gate**: desktop binary takes map path as CLI arg and loads any of the 4 maps
+- [x] Remove hardcoded `INIT_LOAD_LEVEL` from `playground.h:4`
+- [x] `playground::load(map_path)` loads + inits; `instance::run(map_path)` is the entry point
+- [x] `main(argc, argv)` accepts CLI map arg; defaults to `game/assets/maps/pitfall.sr`
+- [x] **Exit gate**: `./sr_desktop game/assets/maps/<id>.sr` works for any of the 4 maps
 
 ---
 

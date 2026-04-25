@@ -7,10 +7,12 @@
 #include "emulation/tile_actor.h"
 #include "drawing/draw_util.h"
 
-playground::playground()
+playground::playground() = default;
+
+void playground::load(const std::string& map_path)
 {
-	m_level = emu::level{ INIT_LOAD_LEVEL };
-	//m_level = emu::level{ 2000, 2000 };
+	m_level = emu::level{ map_path.c_str() };
+	init();
 }
 
 void playground::init()

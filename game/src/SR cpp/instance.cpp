@@ -4,6 +4,7 @@
 
 #include "instance.h"
 #include "command/command_functions.h"
+#include "drawing/draw_util.h"
 
 instance::instance() :
 	m_input_handler{},
@@ -19,7 +20,13 @@ instance::instance() :
 void instance::init()
 {
 	glfwInit();
-	glewInit();
+
+	// Request a core 3.3 context up-front so the window is created with the
+	// right profile. Forward-compat is required on macOS for any 3.x core.
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 
 	enable_drawing(true);
 
@@ -36,9 +43,9 @@ void instance::init()
 	add_command("printevents", cmd::cmd_print_events);
 }
 
-void instance::run()
+void instance::run(const std::string& map_path)
 {
-	m_playground.init();
+	m_playground.load(map_path);
 
 	while (true)
 	{
@@ -96,10 +103,7 @@ void instance::update(emu::timespan delta)
 	if (m_drawing_enabled)
 	{
 		glfwGetWindowSize(m_win, &width, &height);
-		glViewport(0, 0, width, height);
-		glMatrixMode(GL_PROJECTION);
-		glLoadIdentity();
-		glOrtho(0, width, height, 0, -1, 1);
+		draw::set_viewport(width, height);
 	}
 	
 	m_playground.update(delta, m_inputs, emu::vector{ (float)width, (float)height });
@@ -152,8 +156,14 @@ void instance::enable_drawing(bool enable)
 
 		glfwSwapInterval(0);
 
-		glMatrixMode(GL_PROJECTION);
-		glOrtho(0, window_width, window_height, 0, -1, 1);
+		// glewInit() requires a current GL context, so it lives here (not
+		// in instance::init()) — and must run before any GL call.
+#ifndef __EMSCRIPTEN__
+		glewExperimental = GL_TRUE;
+		glewInit();
+#endif
+		draw::init();
+		draw::set_viewport((int)window_width, (int)window_height);
 		glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 
 		m_input_handler.init_callbacks(m_win);

@@ -1,7 +1,11 @@
 #ifndef DRAW_UTIL_H
 #define DRAW_UTIL_H
 
+#ifdef __EMSCRIPTEN__
+#include <GLES3/gl3.h>
+#else
 #include <GL/glew.h>
+#endif
 #include <GLFW/glfw3.h>
 
 #include "camera.h"
@@ -19,10 +23,23 @@
 
 namespace draw
 {
+	// Lifecycle. init() is idempotent — safe to call after every context
+	// creation. set_viewport() must be called after init() and whenever the
+	// window resizes; it updates the internal ortho projection (origin
+	// top-left, +y down) and calls glViewport.
+	void init();
+	void shutdown();
+	void set_viewport(int width_px, int height_px);
+
 	void draw_triangle(float r, float g, float b, emu::vector p1, emu::vector p2, emu::vector p3);
 	void draw_rectangle(float r, float g, float b, const emu::aabb& bounds);
 	void draw_rectangle(float r, float g, float b, emu::vector p1, emu::vector p2);
 	void draw_line(float r, float g, float b, emu::vector p1, emu::vector p2);
+
+	// Alpha-aware variants used by ghost rendering (Phase 4d).
+	void draw_triangle_a(float r, float g, float b, float a, emu::vector p1, emu::vector p2, emu::vector p3);
+	void draw_rectangle_a(float r, float g, float b, float a, emu::vector p1, emu::vector p2);
+	void draw_line_a(float r, float g, float b, float a, emu::vector p1, emu::vector p2);
 
 	void draw_tile(emu::tile_id tile, emu::vector pos);
 	void draw_tile_layer(emu::tile_layer_base* tile_Layer, const camera& camera);

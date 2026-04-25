@@ -1,7 +1,7 @@
 #ifndef PLAYGROUND_H
 #define PLAYGROUND_H
 
-#define INIT_LOAD_LEVEL "C:\\Program Files (x86)\\Steam\\steamapps\\common\\SpeedRunners\\Content\\Levels\\Multiplayer\\swiftpeaks.xnb"
+#include <string>
 
 #include "emulation/state.h"
 #include "emulation/input.h"
@@ -43,6 +43,7 @@ struct playground
 	playground();
 
 	void init();
+	void load(const std::string& map_path);
 	void reset();
 
 	void update_input(const inputs& inputs);

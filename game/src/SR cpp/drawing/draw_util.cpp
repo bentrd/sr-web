@@ -1,4 +1,7 @@
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
 
 #include "draw_util.h"
 #include "../emulation/tile_layer_base.h"
@@ -6,50 +9,258 @@
 using namespace draw;
 using namespace emu;
 
-void draw::draw_triangle(float r, float g, float b, vector p1, vector p2, vector p3)
+// ---------------------------------------------------------------------------
+// Modern-GL backend
+//
+// All public draw_* functions funnel into submit_triangles() / submit_lines(),
+// which upload a small batch of vec2 vertices to a single VBO and issue one
+// glDrawArrays. The shader takes a vec2 position attribute, an ortho
+// projection uniform, and a single uniform color (rgba) — no per-vertex
+// color, since every existing call site uses a single flat color anyway.
+//
+// The original SR-cpp used immediate-mode (`glBegin`/`glVertex2f`), which
+// WebGL does not support and macOS only supports in a compatibility profile.
+// This rewrite is required for both web and modern desktop.
+// ---------------------------------------------------------------------------
+
+namespace
 {
-	glBegin(GL_TRIANGLES);
-	glColor3f(r, g, b);
-	glVertex2f(p1.x, p1.y);
-	glVertex2f(p2.x, p2.y);
-	glVertex2f(p3.x, p3.y);
-	glEnd();
+#ifdef __EMSCRIPTEN__
+	const char* k_vert_src =
+		"#version 300 es\n"
+		"precision highp float;\n"
+		"layout(location = 0) in vec2 a_pos;\n"
+		"uniform mat4 u_proj;\n"
+		"void main() { gl_Position = u_proj * vec4(a_pos, 0.0, 1.0); }\n";
+
+	const char* k_frag_src =
+		"#version 300 es\n"
+		"precision highp float;\n"
+		"uniform vec4 u_color;\n"
+		"out vec4 o_color;\n"
+		"void main() { o_color = u_color; }\n";
+#else
+	const char* k_vert_src =
+		"#version 330 core\n"
+		"layout(location = 0) in vec2 a_pos;\n"
+		"uniform mat4 u_proj;\n"
+		"void main() { gl_Position = u_proj * vec4(a_pos, 0.0, 1.0); }\n";
+
+	const char* k_frag_src =
+		"#version 330 core\n"
+		"uniform vec4 u_color;\n"
+		"out vec4 o_color;\n"
+		"void main() { o_color = u_color; }\n";
+#endif
+
+	struct gl_state
+	{
+		GLuint program = 0;
+		GLuint vao = 0;
+		GLuint vbo = 0;
+		GLint u_proj = -1;
+		GLint u_color = -1;
+		GLsizei vbo_capacity = 0;  // in vertices (2 floats each)
+		float proj[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+		bool initialized = false;
+	};
+
+	gl_state g_state;
+
+	GLuint compile_shader(GLenum type, const char* src)
+	{
+		GLuint sh = glCreateShader(type);
+		glShaderSource(sh, 1, &src, nullptr);
+		glCompileShader(sh);
+
+		GLint ok = GL_FALSE;
+		glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+		if (!ok)
+		{
+			char log[1024] = {};
+			glGetShaderInfoLog(sh, sizeof(log), nullptr, log);
+			std::fprintf(stderr, "draw: shader compile failed: %s\n", log);
+			std::exit(1);
+		}
+		return sh;
+	}
+
+	GLuint link_program(GLuint vs, GLuint fs)
+	{
+		GLuint prog = glCreateProgram();
+		glAttachShader(prog, vs);
+		glAttachShader(prog, fs);
+		glLinkProgram(prog);
+
+		GLint ok = GL_FALSE;
+		glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+		if (!ok)
+		{
+			char log[1024] = {};
+			glGetProgramInfoLog(prog, sizeof(log), nullptr, log);
+			std::fprintf(stderr, "draw: program link failed: %s\n", log);
+			std::exit(1);
+		}
+		return prog;
+	}
+
+	void make_ortho(float* out, float left, float right, float bottom, float top, float near_p, float far_p)
+	{
+		// Column-major. Maps (left..right) -> (-1..+1), (top..bottom) -> (-1..+1).
+		// We pass top=0, bottom=h so (0..h) screen y maps to (-1..+1) NDC y
+		// with top of screen at y=-1 (matches glOrtho(0,w,h,0,-1,1)).
+		const float rl = right - left;
+		const float tb = top - bottom;
+		const float fn = far_p - near_p;
+
+		out[0]  = 2.0f / rl;  out[1]  = 0.0f;        out[2]  = 0.0f;            out[3]  = 0.0f;
+		out[4]  = 0.0f;       out[5]  = 2.0f / tb;   out[6]  = 0.0f;            out[7]  = 0.0f;
+		out[8]  = 0.0f;       out[9]  = 0.0f;        out[10] = -2.0f / fn;      out[11] = 0.0f;
+		out[12] = -(right + left) / rl;
+		out[13] = -(top + bottom) / tb;
+		out[14] = -(far_p + near_p) / fn;
+		out[15] = 1.0f;
+	}
+
+	void ensure_vbo_capacity(GLsizei needed_verts)
+	{
+		if (needed_verts <= g_state.vbo_capacity) return;
+
+		GLsizei new_cap = g_state.vbo_capacity > 0 ? g_state.vbo_capacity : 256;
+		while (new_cap < needed_verts) new_cap *= 2;
+
+		glBindBuffer(GL_ARRAY_BUFFER, g_state.vbo);
+		glBufferData(GL_ARRAY_BUFFER, new_cap * 2 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+		g_state.vbo_capacity = new_cap;
+	}
+
+	void submit(GLenum mode, const float* verts, GLsizei count, float r, float g, float b, float a)
+	{
+		if (!g_state.initialized) return;
+
+		ensure_vbo_capacity(count);
+
+		glUseProgram(g_state.program);
+		glUniformMatrix4fv(g_state.u_proj, 1, GL_FALSE, g_state.proj);
+		glUniform4f(g_state.u_color, r, g, b, a);
+
+		glBindVertexArray(g_state.vao);
+		glBindBuffer(GL_ARRAY_BUFFER, g_state.vbo);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, count * 2 * sizeof(float), verts);
+
+		glDrawArrays(mode, 0, count);
+	}
+
+	inline void submit_triangles(const float* verts, GLsizei vert_count, float r, float g, float b, float a)
+	{
+		submit(GL_TRIANGLES, verts, vert_count, r, g, b, a);
+	}
+
+	inline void submit_lines(const float* verts, GLsizei vert_count, float r, float g, float b, float a)
+	{
+		submit(GL_LINES, verts, vert_count, r, g, b, a);
+	}
 }
 
-void draw::draw_rectangle(float r, float g, float b, const aabb& bounds)
+void draw::init()
 {
-	glBegin(GL_TRIANGLES);
-	glColor3f(r, g, b);
-	glVertex2f(bounds.min_x, bounds.min_y);
-	glVertex2f(bounds.max_x, bounds.min_y);
-	glVertex2f(bounds.max_x, bounds.max_x);
-	glVertex2f(bounds.min_x, bounds.min_y);
-	glVertex2f(bounds.min_x, bounds.max_y);
-	glVertex2f(bounds.max_x, bounds.max_x);
-	glEnd();
+	if (g_state.initialized) return;
+
+	GLuint vs = compile_shader(GL_VERTEX_SHADER, k_vert_src);
+	GLuint fs = compile_shader(GL_FRAGMENT_SHADER, k_frag_src);
+	g_state.program = link_program(vs, fs);
+	glDeleteShader(vs);
+	glDeleteShader(fs);
+
+	g_state.u_proj = glGetUniformLocation(g_state.program, "u_proj");
+	g_state.u_color = glGetUniformLocation(g_state.program, "u_color");
+
+	glGenVertexArrays(1, &g_state.vao);
+	glGenBuffers(1, &g_state.vbo);
+
+	glBindVertexArray(g_state.vao);
+	glBindBuffer(GL_ARRAY_BUFFER, g_state.vbo);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+
+	// Alpha blending so ghost rendering (Phase 4d, a < 1.0) composites.
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	g_state.initialized = true;
+}
+
+void draw::shutdown()
+{
+	if (!g_state.initialized) return;
+	if (g_state.vbo) glDeleteBuffers(1, &g_state.vbo);
+	if (g_state.vao) glDeleteVertexArrays(1, &g_state.vao);
+	if (g_state.program) glDeleteProgram(g_state.program);
+	g_state = gl_state{};
+}
+
+void draw::set_viewport(int width_px, int height_px)
+{
+	glViewport(0, 0, width_px, height_px);
+	make_ortho(g_state.proj, 0.0f, (float)width_px, (float)height_px, 0.0f, -1.0f, 1.0f);
+}
+
+// ---------------------------------------------------------------------------
+// Primitive draws
+// ---------------------------------------------------------------------------
+
+void draw::draw_triangle_a(float r, float g, float b, float a, vector p1, vector p2, vector p3)
+{
+	const float verts[6] = { p1.x, p1.y, p2.x, p2.y, p3.x, p3.y };
+	submit_triangles(verts, 3, r, g, b, a);
+}
+
+void draw::draw_triangle(float r, float g, float b, vector p1, vector p2, vector p3)
+{
+	draw_triangle_a(r, g, b, 1.0f, p1, p2, p3);
+}
+
+void draw::draw_rectangle_a(float r, float g, float b, float a, vector p1, vector p2)
+{
+	const float verts[12] = {
+		p1.x, p1.y,
+		p2.x, p1.y,
+		p2.x, p2.y,
+		p1.x, p1.y,
+		p1.x, p2.y,
+		p2.x, p2.y,
+	};
+	submit_triangles(verts, 6, r, g, b, a);
 }
 
 void draw::draw_rectangle(float r, float g, float b, vector p1, vector p2)
 {
-	glBegin(GL_TRIANGLES);
-	glColor3f(r, g, b);
-	glVertex2f(p1.x, p1.y);
-	glVertex2f(p2.x, p1.y); 
-	glVertex2f(p2.x, p2.y); 
-	glVertex2f(p1.x, p1.y);
-	glVertex2f(p1.x, p2.y);
-	glVertex2f(p2.x, p2.y);
-	glEnd();
+	draw_rectangle_a(r, g, b, 1.0f, p1, p2);
+}
+
+void draw::draw_rectangle(float r, float g, float b, const aabb& bounds)
+{
+	// Fixes a long-standing typo from immediate-mode code where two of the
+	// six vertices used max_x for the y-coordinate.
+	draw_rectangle_a(r, g, b, 1.0f,
+		vector{ bounds.min_x, bounds.min_y },
+		vector{ bounds.max_x, bounds.max_y });
+}
+
+void draw::draw_line_a(float r, float g, float b, float a, vector p1, vector p2)
+{
+	const float verts[4] = { p1.x, p1.y, p2.x, p2.y };
+	submit_lines(verts, 2, r, g, b, a);
 }
 
 void draw::draw_line(float r, float g, float b, vector p1, vector p2)
 {
-	glBegin(GL_LINES);
-	glColor3f(r, g, b);
-	glVertex2f(p1.x, p1.y);
-	glVertex2f(p2.x, p2.y);
-	glEnd();
+	draw_line_a(r, g, b, 1.0f, p1, p2);
 }
+
+// ---------------------------------------------------------------------------
+// Higher-level draws (unchanged behavior; just call new primitives)
+// ---------------------------------------------------------------------------
 
 void draw::draw_tile(emu::tile_id tile, vector pos)
 {
@@ -113,6 +324,8 @@ void draw::draw_tile(emu::tile_id tile, vector pos)
 			0.0f, 0.0f, 0.0f,
 			pos, pos + vector{ 16.0f, 0.0f }, pos + vector{ 16.0f, 16.0f });
 		break;
+	case tile_count:
+		break;
 	}
 }
 
@@ -138,7 +351,7 @@ void draw::draw_tile_layer(tile_layer_base* tile_layer, const camera& camera)
 void draw::draw_player(player* player, const camera& camera)
 {
 	draw::draw_rectangle(
-		1.0f, 0.0f, 0.0f, 
+		1.0f, 0.0f, 0.0f,
 		player->get_collision()->get_vertex(0) - camera.position,
 		player->get_collision()->get_vertex(2) - camera.position);
 
@@ -307,7 +520,7 @@ void draw::draw_left_pot_map(const util::level_prep& prep, const camera& camera)
 				color col_l = color{ 0.0f, 1.0f - pot.dist_left / 50.0f, 0.0f };
 				{
 					draw::draw_triangle(col_l.r, col_l.g, col_l.b, screen_pos, screen_pos + vector{ 16.0f, 16.0f }, screen_pos + vector{ 0.0f, 16.0f });
-				} 
+				}
 			}
 			if (pot.pot_right != util::miss)
 			{

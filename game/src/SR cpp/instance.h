@@ -38,7 +38,7 @@ struct instance
 	instance();
 
 	void init();
-	void run();
+	void run(const std::string& map_path);
 
 	void update(emu::timespan delta);
 	void update_input();
