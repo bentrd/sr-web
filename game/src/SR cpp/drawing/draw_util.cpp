@@ -440,14 +440,28 @@ void draw::draw_grapple(grapple* grapple, const camera& camera)
 {
 	if (grapple->m_actor->d.is_collision_active)
 	{
+		const vector hook_p = grapple->get_center() - camera.position;
+		const vector owner_p = grapple->m_owner->m_actor->get_collision()->get_center() - camera.position;
+
+		// Rope as a thin oriented quad rather than GL_LINES so it lives in
+		// the triangle batch — without that, lines render after triangles
+		// in flush_frame() and the rope would end up in front of the
+		// player. With draw_state's two-pass ordering (non-players first,
+		// then players), this push ends up under the local-player rect.
+		const vector dir = hook_p - owner_p;
+		const float len = dir.length();
+		if (len > 0.001f)
+		{
+			const float half_w = 1.0f;
+			const vector n{ -dir.y / len * half_w, dir.x / len * half_w };
+			draw_triangle(0.0f, 0.0f, 0.0f, owner_p + n, hook_p + n, hook_p - n);
+			draw_triangle(0.0f, 0.0f, 0.0f, owner_p + n, hook_p - n, owner_p - n);
+		}
+
 		draw::draw_rectangle(
 			1.0f, 0.0f, 0.0f,
 			grapple->m_actor->d.position - camera.position,
 			grapple->m_actor->d.position + grapple->m_actor->d.size - camera.position);
-		draw::draw_line(
-			0.0f, 0.0f, 0.0f,
-			grapple->get_center() - camera.position,
-			grapple->m_owner->m_actor->get_collision()->get_center() - camera.position);
 	}
 }
 
@@ -458,8 +472,11 @@ void draw::draw_player_start(player_start* player_start, const camera& camera)
 
 void draw::draw_super_boost_volume(super_boost_volume* super_boost_volume, const camera& camera)
 {
-	draw::draw_rectangle(
-		0.0f, 1.0f, 0.0f,
+	// Render at low alpha — these volumes are huge and an opaque green
+	// fill drowns the rest of the level. 10% reads as a tinted region
+	// without obscuring the geometry behind it.
+	draw::draw_rectangle_a(
+		0.0f, 1.0f, 0.0f, 0.1f,
 		super_boost_volume->m_actor->m_bounds.get_vertex(0) - camera.position,
 		super_boost_volume->m_actor->m_bounds.get_vertex(2) - camera.position);
 }
@@ -510,8 +527,20 @@ void draw::draw_state(state* state, const camera& camera)
 {
 	if (state->m_collision_engine.m_level != nullptr)
 		draw_tile_layer(&(state->m_collision_engine.m_level->m_tile_layer), camera);
+	// Two-pass actor draw so the local player always sits above its
+	// grapple rope (and any other actors that might overlap it). Push
+	// order = paint order in the batched triangle stream, so emitting
+	// non-player actors first and players last is enough.
 	for (auto& actor : state->actors())
-		draw_actor_controller(actor->m_controller.get(), camera);
+	{
+		if (dynamic_cast<emu::player*>(actor->m_controller.get()) == nullptr)
+			draw_actor_controller(actor->m_controller.get(), camera);
+	}
+	for (auto& actor : state->actors())
+	{
+		if (dynamic_cast<emu::player*>(actor->m_controller.get()) != nullptr)
+			draw_actor_controller(actor->m_controller.get(), camera);
+	}
 }
 
 void draw::draw_right_pot_map(const util::level_prep& prep, const camera& camera)
@@ -562,8 +591,9 @@ void draw::draw_ghost(const net::ghost_state& ghost, const camera& camera)
 
 	const vector top_left = ghost.position - camera.position;
 	const vector bot_right = ghost.position + ghost.size - camera.position;
-	draw_rectangle_a(ghost.color_r, ghost.color_g, ghost.color_b, a, top_left, bot_right);
 
+	// Push the rope + end markers BEFORE the ghost rectangle so the body
+	// sits on top — same convention as the local player.
 	if (ghost.grapple_active)
 	{
 		const vector origin_s = ghost.grapple_origin - camera.position;
@@ -594,6 +624,8 @@ void draw::draw_ghost(const net::ghost_state& ghost, const camera& camera)
 			origin_s + vector{ -3.0f, -3.0f },
 			origin_s + vector{  3.0f,  3.0f });
 	}
+
+	draw_rectangle_a(ghost.color_r, ghost.color_g, ghost.color_b, a, top_left, bot_right);
 }
 
 void draw::draw_left_pot_map(const util::level_prep& prep, const camera& camera)

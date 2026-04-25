@@ -78,6 +78,32 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 	const [lastError, setLastError] =
 		useState<{ code: string; message: string } | null>(null);
 
+	// Block key events from reaching Emscripten's GLFW shim while a text
+	// input has focus. Emscripten registers `addEventListener("keydown",
+	// GLFW.onKeydown, true)` on window in capture phase; we install our
+	// own capture-phase listener BEFORE WASM loads, so it fires first and
+	// we can stopImmediatePropagation() to keep chat keystrokes out of the
+	// game. Same treatment for keyup so held-key state stays consistent.
+	useEffect(() => {
+		const isTypingTarget = (el: EventTarget | null): boolean => {
+			if (!(el instanceof HTMLElement)) return false;
+			if (el.isContentEditable) return true;
+			const tag = el.tagName;
+			return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+		};
+		const onKey = (e: KeyboardEvent): void => {
+			if (isTypingTarget(document.activeElement)) {
+				e.stopImmediatePropagation();
+			}
+		};
+		window.addEventListener("keydown", onKey, true);
+		window.addEventListener("keyup", onKey, true);
+		return () => {
+			window.removeEventListener("keydown", onKey, true);
+			window.removeEventListener("keyup", onKey, true);
+		};
+	}, []);
+
 	useEffect(() => {
 		const offStatus = ws.onStatus(setWsStatus);
 		const offMsg = ws.onMessage((msg: ServerMsg) => {
