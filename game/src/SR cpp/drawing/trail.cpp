@@ -113,6 +113,13 @@ namespace
 	{
 		emu::vector pos{ 0.0f, 0.0f };
 		emu::vector vel{ 0.0f, 0.0f };
+		// Distance from the previous sample in the same strip. SR uses
+		// this to map U-coords by accumulated path length instead of by
+		// vertex index — without it, dense bunching at slow points
+		// compresses the texture (and stretches it across sparse fast
+		// regions), which is exactly what produced the bright "wing"
+		// artifacts at peaks.
+		float seg_length = 0.0f;
 		float age = 0.0f;
 		bool strip_start = false;
 	};
@@ -377,9 +384,20 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bo
 		const bool strip_start = L.samples.empty() ||
 			L.time_since_last_push > k_strip_break_seconds;
 
+		const emu::vector new_pos{ pos.x + off.x, pos.y + off.y };
+		float seg_length = 0.0f;
+		if (!strip_start && !L.samples.empty())
+		{
+			const auto& prev = L.samples.back();
+			const float dx = new_pos.x - prev.pos.x;
+			const float dy = new_pos.y - prev.pos.y;
+			seg_length = std::sqrt(dx * dx + dy * dy);
+		}
+
 		L.samples.push_back(sample{
-			emu::vector{ pos.x + off.x, pos.y + off.y },
+			new_pos,
 			vel,
+			seg_length,
 			0.0f,
 			strip_start });
 		L.time_since_last_push = 0.0f;
@@ -428,103 +446,91 @@ void trail::draw_all(const draw::camera& cam, float /*current_abs_vx*/)
 			if (n >= 2)
 			{
 				g.verts.clear();
-				// Miter-limit cap. At very sharp turns the bisector
-				// scaling blows up; clamp to keep the ribbon from
-				// growing spikes. 2.5x means we tolerate joints up to
-				// ~2.5x normal width before falling back to the
-				// (clamped) bisector direction.
-				constexpr float k_miter_limit = 2.5f;
 
+				// Total path length of this strip — denominator for the
+				// U coordinate. Skips the first sample because its
+				// seg_length is from the previous strip (or zero for a
+				// fresh strip). SR's algorithm — texture distributes by
+				// distance traveled, not by sample count.
+				float total_length = 0.0f;
+				for (std::size_t k = 1; k < n; ++k)
+					total_length += L.samples[run_begin + k].seg_length;
+				if (total_length < 0.001f) { run_begin = run_end; continue; }
+
+				// InvertNormal: SR flips the V coord per-strip when the
+				// trail's first segment's perpendicular points down in
+				// world space. Without this the texture appears
+				// mirrored when the player runs leftward (or any
+				// direction that makes the perpendicular's Y negative).
+				// Computed from the second sample's neighbor-difference
+				// direction, mirroring SR's nYaTtVj normal calc.
+				bool invert_v_strip = false;
+				if (!L.force_right_side_up && n >= 2)
+				{
+					const float dx = L.samples[run_begin + 1].pos.x - L.samples[run_begin].pos.x;
+					const float dy = L.samples[run_begin + 1].pos.y - L.samples[run_begin].pos.y;
+					const float dl = std::sqrt(dx * dx + dy * dy);
+					if (dl > 0.001f)
+					{
+						const float first_normal_y = dx / dl;  // perp.y = dir.x / |dir|
+						invert_v_strip = (first_normal_y > 0.0f);
+					}
+				}
+
+				float accum_length = 0.0f;
 				for (std::size_t k = 0; k < n; ++k)
 				{
 					const std::size_t i = run_begin + k;
 
-					// Incoming and outgoing edge directions in WORLD
-					// space, normalized. At endpoints one side is
-					// missing so we mirror the other; if both are zero
-					// (truly stationary) we fall back to the stored
-					// velocity direction.
-					float inx = 0.0f, iny = 0.0f;
-					if (k > 0)
+					// Centered-difference normal — SR's nYaTtVj style.
+					// At strip boundaries we treat self as the missing
+					// neighbor (so a 1-sided difference falls out of
+					// the same formula).
+					const std::size_t i_prev = (k == 0) ? i : i - 1;
+					const std::size_t i_next = (k + 1 == n) ? i : i + 1;
+					float dx = L.samples[i_next].pos.x - L.samples[i_prev].pos.x;
+					float dy = L.samples[i_next].pos.y - L.samples[i_prev].pos.y;
+					float dl = std::sqrt(dx * dx + dy * dy);
+					if (dl < 0.001f)
 					{
-						const float dx = L.samples[i].pos.x - L.samples[i - 1].pos.x;
-						const float dy = L.samples[i].pos.y - L.samples[i - 1].pos.y;
-						const float dl = std::sqrt(dx * dx + dy * dy);
-						if (dl > 0.001f) { inx = dx / dl; iny = dy / dl; }
-					}
-					float onx = 0.0f, ony = 0.0f;
-					if (k + 1 < n)
-					{
-						const float dx = L.samples[i + 1].pos.x - L.samples[i].pos.x;
-						const float dy = L.samples[i + 1].pos.y - L.samples[i].pos.y;
-						const float dl = std::sqrt(dx * dx + dy * dy);
-						if (dl > 0.001f) { onx = dx / dl; ony = dy / dl; }
-					}
-					if (inx == 0.0f && iny == 0.0f && onx == 0.0f && ony == 0.0f)
-					{
+						// Fall back to stored velocity if neighbors
+						// collapsed (apex of vertical jump etc.).
 						const auto& v = L.samples[i].vel;
 						const float vl = std::sqrt(v.x * v.x + v.y * v.y);
-						if (vl < 0.001f) continue;  // truly no direction available
-						onx = v.x / vl; ony = v.y / vl;
-						inx = onx; iny = ony;
+						if (vl < 0.001f) { accum_length += L.samples[i].seg_length; continue; }
+						dx = v.x; dy = v.y; dl = vl;
 					}
-					if (inx == 0.0f && iny == 0.0f) { inx = onx; iny = ony; }
-					if (onx == 0.0f && ony == 0.0f) { onx = inx; ony = iny; }
+					// Perpendicular (90° CCW), normalized — matches SR:
+					// normal.X = -dir.Y, normal.Y = dir.X.
+					const float nx = -dy / dl;
+					const float ny =  dx / dl;
 
-					// Perpendiculars (rotated 90° CCW) of incoming /
-					// outgoing edges. Both rotated the same way, so
-					// they sit on the same side of the polyline and
-					// the bisector below picks the consistent ribbon
-					// orientation automatically — no continuity guard
-					// needed.
-					const float pn_in_x  = -iny, pn_in_y  = inx;
-					const float pn_out_x = -ony, pn_out_y = onx;
-
-					// Bisector of the two perpendiculars.
-					float mx = pn_in_x + pn_out_x;
-					float my = pn_in_y + pn_out_y;
-					float ml = std::sqrt(mx * mx + my * my);
-					float miter_scale = 1.0f;
-					if (ml < 0.001f)
-					{
-						// 180° turn — bisector is degenerate. Use the
-						// incoming perpendicular and accept a flat cap.
-						mx = pn_in_x; my = pn_in_y; ml = 1.0f;
-					}
-					else
-					{
-						mx /= ml; my /= ml;
-						// Length scaling that keeps the ribbon's outer
-						// edge perpendicular to each segment. cos_half
-						// is the cosine of half the turn angle: 1 on a
-						// straight line, → 0 at sharp turns.
-						const float cos_half = mx * pn_in_x + my * pn_in_y;
-						if (std::abs(cos_half) > 1e-3f)
-						{
-							miter_scale = 1.0f / std::abs(cos_half);
-							if (miter_scale > k_miter_limit) miter_scale = k_miter_limit;
-						}
-					}
+					if (k > 0) accum_length += L.samples[i].seg_length;
 
 					const float t = L.samples[i].age / L.lifetime;
 					const float taper_factor = L.taper ? std::max(0.0f, 1.0f - t) : 1.0f;
-					const float half_w = L.size * 0.5f * taper_factor * miter_scale;
+					const float half_w = L.size * 0.5f * taper_factor;
 
 					float alpha = L.opacity;
 					if (L.fade_out)
 						alpha *= std::max(0.0f, 1.0f - t * L.fade_out_speed);
 
-					float u_norm = (n > 1) ? (static_cast<float>(k) / static_cast<float>(n - 1)) : 0.0f;
+					float u_norm = accum_length / total_length;
 					if (L.flip_h) u_norm = 1.0f - u_norm;
-					const float v_top = L.flip_v ? 1.0f : 0.0f;
-					const float v_bot = L.flip_v ? 0.0f : 1.0f;
+
+					// V is flipped both by the layer's flip_v setting
+					// AND by the per-strip InvertNormal. The XOR keeps
+					// the two flips composable.
+					const bool v_flipped = L.flip_v ^ invert_v_strip;
+					const float v_top = v_flipped ? 1.0f : 0.0f;
+					const float v_bot = v_flipped ? 0.0f : 1.0f;
 
 					const float px = L.samples[i].pos.x;
 					const float py = L.samples[i].pos.y;
-					const float top_x = px + mx * half_w - cam.position.x;
-					const float top_y = py + my * half_w - cam.position.y;
-					const float bot_x = px - mx * half_w - cam.position.x;
-					const float bot_y = py - my * half_w - cam.position.y;
+					const float top_x = px + nx * half_w - cam.position.x;
+					const float top_y = py + ny * half_w - cam.position.y;
+					const float bot_x = px - nx * half_w - cam.position.x;
+					const float bot_y = py - ny * half_w - cam.position.y;
 
 					push_vert(top_x, top_y, u_norm, v_top, L.color[0], L.color[1], L.color[2], alpha);
 					push_vert(bot_x, bot_y, u_norm, v_bot, L.color[0], L.color[1], L.color[2], alpha);
