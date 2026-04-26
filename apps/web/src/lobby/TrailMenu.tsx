@@ -292,8 +292,11 @@ export function TrailMenu(): JSX.Element {
 		}
 	}
 
+	// Fixed width — keeps the pill from jumping when the active trail
+	// name changes length and forces ellipsis on long names instead of
+	// reflowing the surrounding header.
 	const pillBase =
-		"flex h-9 items-center gap-1.5 rounded-lg border-0 bg-transparent px-3 text-xs font-medium transition";
+		"flex h-9 w-44 items-center gap-1.5 rounded-lg border-0 bg-transparent px-3 text-xs font-medium transition";
 	const pillState = error
 		? "text-red-300 hover:bg-zinc-800"
 		: hover
@@ -344,12 +347,12 @@ export function TrailMenu(): JSX.Element {
 							? `${identity.trail.name} — click to swap. Right-click to clear.`
 							: "Pick a preset or upload a trail folder"
 				}
-				className={`${pillBase} ${pillState} max-w-[12rem] truncate`}
+				className={`${pillBase} ${pillState}`}
 			>
 				{showUploadHover ? (
 					<>
 						<UploadIcon className="size-3.5" />
-						<span>Upload</span>
+						<span className="min-w-0 flex-1 truncate text-left">Upload</span>
 					</>
 				) : identity.trail ? (
 					<>
@@ -358,17 +361,21 @@ export function TrailMenu(): JSX.Element {
 							placeholder="✓"
 							className={identity.trail.iconDataUrl ? "" : "text-base"}
 						/>
-						<span className="truncate">{identity.trail.name}</span>
+						<span className="min-w-0 flex-1 truncate text-left">
+							{identity.trail.name}
+						</span>
 					</>
 				) : (
 					<>
 						<span className="text-base leading-none" aria-hidden>
 							✦
 						</span>
-						<span>Trail</span>
+						<span className="min-w-0 flex-1 truncate text-left">Trail</span>
 					</>
 				)}
-				<ChevronDown className={`size-3 text-zinc-500 transition ${open ? "rotate-180" : ""}`} />
+				<ChevronDown
+					className={`size-3 shrink-0 text-zinc-500 transition ${open ? "rotate-180" : ""}`}
+				/>
 			</button>
 
 			{open && (
