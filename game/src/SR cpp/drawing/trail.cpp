@@ -91,10 +91,14 @@ namespace
 	// frame — cheap enough that we don't need a throttle.
 	constexpr float k_sample_period = 0.0f;
 
-	// Strip break threshold. If samples skipped a window longer than this
-	// (e.g. player sat below the superspeed gate for >50ms), the next push
-	// starts a new strip rather than connecting through the dead zone.
-	constexpr float k_strip_break_seconds = 0.05f;
+	// Strip break threshold. If samples skipped a window longer than this,
+	// the next push starts a new strip rather than connecting through the
+	// dead zone. Set generous (300ms) so brief gate dropouts at jump
+	// apices — where hypot(vx,vy) can dip under 800 for a few ticks even
+	// during a continuous run — don't fragment the trail into a chain of
+	// short strips, which produces visible "knot" artifacts where the
+	// bright texture head of one strip meets the tail of the next.
+	constexpr float k_strip_break_seconds = 0.3f;
 
 	// Two binary speed gates. ALWAYS layers turn on at hypot(vx,vy) >= 800
 	// (so a high-arc jump or a wallride still trails); ONLY_AT_SUPERSPEED
