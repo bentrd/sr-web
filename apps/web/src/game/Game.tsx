@@ -102,6 +102,8 @@ interface CAbi {
 	setVisualGrappleHeadSize: (size: number) => void;
 	setVisualBoostSection: (r: number, g: number, b: number, a: number) => void;
 	setVisualBoostPickup: (r: number, g: number, b: number, a: number) => void;
+	saveState: () => void;
+	loadState: () => boolean;
 }
 
 function bindCAbi(mod: SrModule): CAbi {
@@ -135,6 +137,8 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_v_grapple_head_size = mod.cwrap("sr_set_visual_grapple_head_size", null, ["number"]);
 	const f_v_boost_section = mod.cwrap("sr_set_visual_boost_section", null, ["number", "number", "number", "number"]);
 	const f_v_boost_pickup = mod.cwrap("sr_set_visual_boost_pickup", null, ["number", "number", "number", "number"]);
+	const f_save_state = mod.cwrap("sr_save_state", null, []);
+	const f_load_state = mod.cwrap("sr_load_state", "number", []);
 
 	// Persistent scratch buffers in WASM heap. Allocated once; freed on
 	// page unload. malloc/free are exported but we never hit them more
@@ -205,6 +209,8 @@ function bindCAbi(mod: SrModule): CAbi {
 		setVisualGrappleHeadSize: (size) => { f_v_grapple_head_size(size); },
 		setVisualBoostSection: (r, g, b, a) => { f_v_boost_section(r, g, b, a); },
 		setVisualBoostPickup: (r, g, b, a) => { f_v_boost_pickup(r, g, b, a); },
+		saveState: () => { f_save_state(); },
+		loadState: () => (f_load_state() as number) !== 0,
 	};
 }
 
@@ -310,27 +316,51 @@ export function Game(): JSX.Element {
 		abi.setVisualBoostPickup(visuals.boostPickup[0], visuals.boostPickup[1], visuals.boostPickup[2], visuals.boostPickup[3]);
 	}, [visuals, status]);
 
-	// Reset is a UI-only key handled in JS rather than forwarded to GLFW.
-	// Capture phase so we can stopImmediatePropagation before the game's
-	// keydown listeners see it.
+	// Reset / quicksave / quickload are UI-only keys handled in JS rather
+	// than forwarded to GLFW. Capture phase so we can stopImmediatePropagation
+	// before the game's keydown listeners see it.
+	//
+	// We bail if a rebind is in progress (the ControlsModal also listens at
+	// capture phase to grab the next keypress) — without that check, F5 would
+	// trigger a save while the user was trying to bind it.
 	useEffect(() => {
 		if (status !== "ready") return;
 		const resetCode = bindings.reset.code;
+		const saveCode = bindings.save_state.code;
+		const loadCode = bindings.load_state.code;
 		const onKey = (e: KeyboardEvent): void => {
+			if (document.querySelector(".key-cap-active") !== null) return;
 			const ae = document.activeElement;
 			if (ae instanceof HTMLElement &&
 				(ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) {
 				return;
 			}
 			const bind = eventToBinding(e);
-			if (bind === null || bind.code !== resetCode) return;
-			e.preventDefault();
-			e.stopImmediatePropagation();
-			abiRef.current?.resetLocal();
+			if (bind === null) return;
+			const abi = abiRef.current;
+			if (!abi) return;
+			if (bind.code === resetCode) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				abi.resetLocal();
+				return;
+			}
+			if (bind.code === saveCode) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				abi.saveState();
+				return;
+			}
+			if (bind.code === loadCode) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				abi.loadState();
+				return;
+			}
 		};
 		window.addEventListener("keydown", onKey, true);
 		return () => window.removeEventListener("keydown", onKey, true);
-	}, [status, bindings.reset.code]);
+	}, [status, bindings.reset.code, bindings.save_state.code, bindings.load_state.code]);
 
 	// Push the local snapshot at 30 Hz. Idle until the ABI is ready.
 	useEffect(() => {
