@@ -20,6 +20,10 @@ export interface Visuals {
 	boostSection: ColorRgba;
 	boostPickup: ColorRgba;
 	speedometer: SpeedometerMode;
+	// When true, render trails for remote players (at half opacity to
+	// match the half-opacity ghost rectangle). When false, suppress
+	// every ghost track — local player trail is unaffected.
+	showGhostTrails: boolean;
 }
 
 export const VISUAL_DEFAULTS: Visuals = {
@@ -33,6 +37,7 @@ export const VISUAL_DEFAULTS: Visuals = {
 	boostSection: [0, 0.569, 1, 1],
 	boostPickup: [0, 1, 0, 0.1],
 	speedometer: "on",
+	showGhostTrails: true,
 };
 
 export const HEAD_SIZE_MIN = 1;
@@ -83,6 +88,7 @@ export function loadVisuals(): Visuals {
 			boostSection: isColorA(parsed.boostSection) ? parsed.boostSection : VISUAL_DEFAULTS.boostSection,
 			boostPickup: isColorA(parsed.boostPickup) ? parsed.boostPickup : VISUAL_DEFAULTS.boostPickup,
 			speedometer: isSpeedometerMode(parsed.speedometer) ? parsed.speedometer : VISUAL_DEFAULTS.speedometer,
+			showGhostTrails: typeof parsed.showGhostTrails === "boolean" ? parsed.showGhostTrails : VISUAL_DEFAULTS.showGhostTrails,
 		};
 	} catch {
 		return VISUAL_DEFAULTS;

@@ -178,6 +178,14 @@ namespace
 		int h = 0;
 	};
 
+	struct track
+	{
+		std::unordered_map<std::string, image_tex> images;
+		std::vector<layer_data> layers;
+		float opacity_mul = 1.0f;
+		bool visible = true;
+	};
+
 	struct trail_state
 	{
 		GLuint program = 0;
@@ -187,12 +195,31 @@ namespace
 		GLint u_tex = -1;
 		GLsizei vbo_capacity_verts = 0;
 		std::vector<float> verts;  // scratch — cleared per strip
-		std::unordered_map<std::string, image_tex> images;
-		std::vector<layer_data> layers;
+		std::unordered_map<std::string, track> tracks;
 		bool initialized = false;
 	};
 
 	trail_state g;
+
+	inline std::string track_key(const char* id)
+	{
+		return id ? std::string{ id } : std::string{};
+	}
+	inline track& get_or_create_track(const char* id)
+	{
+		return g.tracks[track_key(id)];
+	}
+	inline track* find_track(const char* id)
+	{
+		auto it = g.tracks.find(track_key(id));
+		return it == g.tracks.end() ? nullptr : &it->second;
+	}
+	inline void delete_track_textures(track& t)
+	{
+		for (auto& [name, im] : t.images)
+			if (im.tex) glDeleteTextures(1, &im.tex);
+		t.images.clear();
+	}
 
 	GLuint compile_shader(GLenum type, const char* src)
 	{
@@ -325,10 +352,9 @@ void trail::init()
 void trail::shutdown()
 {
 	if (!g.initialized) return;
-	for (auto& [name, im] : g.images)
-		if (im.tex) glDeleteTextures(1, &im.tex);
-	g.images.clear();
-	g.layers.clear();
+	for (auto& [id, t] : g.tracks)
+		delete_track_textures(t);
+	g.tracks.clear();
 	if (g.vbo) glDeleteBuffers(1, &g.vbo);
 	if (g.vao) glDeleteVertexArrays(1, &g.vao);
 	if (g.program) glDeleteProgram(g.program);
@@ -337,20 +363,41 @@ void trail::shutdown()
 
 void trail::clear()
 {
-	for (auto& [name, im] : g.images)
-		if (im.tex) glDeleteTextures(1, &im.tex);
-	g.images.clear();
-	g.layers.clear();
+	for (auto& [id, t] : g.tracks)
+		delete_track_textures(t);
+	g.tracks.clear();
 }
 
-void trail::register_image(const char* name, int w, int h, const std::uint8_t* rgba)
+void trail::clear_track(const char* track_id)
+{
+	auto it = g.tracks.find(track_key(track_id));
+	if (it == g.tracks.end()) return;
+	delete_track_textures(it->second);
+	g.tracks.erase(it);
+}
+
+void trail::set_track_opacity(const char* track_id, float opacity)
+{
+	if (opacity < 0.0f) opacity = 0.0f;
+	if (opacity > 1.0f) opacity = 1.0f;
+	get_or_create_track(track_id).opacity_mul = opacity;
+}
+
+void trail::set_track_visible(const char* track_id, bool visible)
+{
+	get_or_create_track(track_id).visible = visible;
+}
+
+void trail::register_image(const char* track_id,
+	const char* name, int w, int h, const std::uint8_t* rgba)
 {
 	if (!g.initialized || name == nullptr || rgba == nullptr) return;
 	if (w <= 0 || h <= 0) return;
 
+	track& tr = get_or_create_track(track_id);
 	std::string key{ name };
-	auto it = g.images.find(key);
-	if (it != g.images.end() && it->second.tex)
+	auto it = tr.images.find(key);
+	if (it != tr.images.end() && it->second.tex)
 		glDeleteTextures(1, &it->second.tex);
 
 	GLuint tex = 0;
@@ -362,10 +409,11 @@ void trail::register_image(const char* name, int w, int h, const std::uint8_t* r
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-	g.images[key] = image_tex{ tex, w, h };
+	tr.images[key] = image_tex{ tex, w, h };
 }
 
 void trail::add_layer(
+	const char* track_id,
 	const char* image_name,
 	int enabled_mode,
 	float lifetime_seconds,
@@ -392,17 +440,20 @@ void trail::add_layer(
 	L.force_right_side_up = force_right_side_up;
 	L.offset = emu::vector{ offset_x, offset_y };
 	L.invert_offset = invert_offset;
-	g.layers.push_back(std::move(L));
+	get_or_create_track(track_id).layers.push_back(std::move(L));
 }
 
-void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bool boosting)
+void trail::record_sample(const char* track_id,
+	emu::vector pos, emu::vector vel, float dt_seconds, bool boosting)
 {
-	if (!g.initialized || g.layers.empty()) return;
+	if (!g.initialized) return;
+	track* tr = find_track(track_id);
+	if (tr == nullptr || tr->layers.empty()) return;
 
 	const float speed_xy = std::sqrt(vel.x * vel.x + vel.y * vel.y);
 	const float speed_x  = std::abs(vel.x);
 
-	for (auto& L : g.layers)
+	for (auto& L : tr->layers)
 	{
 		// Age existing samples; evict any past lifetime from the front
 		// (samples are stored oldest-first, so erase(begin) is correct
@@ -503,7 +554,7 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bo
 
 void trail::draw_all(const draw::camera& cam, float /*current_abs_vx*/)
 {
-	if (!g.initialized || g.layers.empty()) return;
+	if (!g.initialized || g.tracks.empty()) return;
 	if (cam.viewport_size.x <= 0.0f || cam.viewport_size.y <= 0.0f) return;
 
 	// No draw-time speed gate. Visibility was decided at record_sample —
@@ -520,106 +571,113 @@ void trail::draw_all(const draw::camera& cam, float /*current_abs_vx*/)
 	glActiveTexture(GL_TEXTURE0);
 	glBindVertexArray(g.vao);
 
-	for (auto& L : g.layers)
+	for (auto& [track_id, tr] : g.tracks)
 	{
-		if (L.samples.size() < 2) continue;
-		auto img_it = g.images.find(L.image_name);
-		if (img_it == g.images.end()) continue;
+		if (!tr.visible) continue;
+		const float track_alpha = tr.opacity_mul;
+		if (track_alpha <= 0.0f) continue;
 
-		glBindTexture(GL_TEXTURE_2D, img_it->second.tex);
-
-		// Walk samples, splitting at strip_start markers. Each contiguous
-		// run becomes one TRIANGLE_STRIP draw call. A single sample isn't
-		// drawable on its own — the ribbon needs two endpoints to have a
-		// direction, so runs of length 1 are skipped silently.
-		std::size_t run_begin = 0;
-		while (run_begin < L.samples.size())
+		for (auto& L : tr.layers)
 		{
-			std::size_t run_end = run_begin + 1;
-			while (run_end < L.samples.size() && !L.samples[run_end].strip_start)
-				++run_end;
-			const std::size_t n = run_end - run_begin;
+			if (L.samples.size() < 2) continue;
+			auto img_it = tr.images.find(L.image_name);
+			if (img_it == tr.images.end()) continue;
 
-			if (n >= 2)
+			glBindTexture(GL_TEXTURE_2D, img_it->second.tex);
+
+			// Walk samples, splitting at strip_start markers. Each contiguous
+			// run becomes one TRIANGLE_STRIP draw call. A single sample isn't
+			// drawable on its own — the ribbon needs two endpoints to have a
+			// direction, so runs of length 1 are skipped silently.
+			std::size_t run_begin = 0;
+			while (run_begin < L.samples.size())
 			{
-				g.verts.clear();
+				std::size_t run_end = run_begin + 1;
+				while (run_end < L.samples.size() && !L.samples[run_end].strip_start)
+					++run_end;
+				const std::size_t n = run_end - run_begin;
 
-				// Total path length of this strip — denominator for the
-				// U coordinate. Skips the first sample because its
-				// seg_length is from the previous strip (or zero for a
-				// fresh strip). SR's algorithm — texture distributes by
-				// distance traveled, not by sample count.
-				float total_length = 0.0f;
-				for (std::size_t k = 1; k < n; ++k)
-					total_length += L.samples[run_begin + k].seg_length;
-				if (total_length < 0.001f) { run_begin = run_end; continue; }
-
-				// InvertNormal: SR flips the V coord per-strip based on
-				// the second sample's stored normal. Stored, not
-				// recomputed — so the strip's V orientation is decided
-				// once at the moment the strip became drawable and
-				// doesn't flip later as samples age out.
-				bool invert_v_strip = false;
-				if (!L.force_right_side_up && n >= 2)
+				if (n >= 2)
 				{
-					invert_v_strip = (L.samples[run_begin + 1].normal.y > 0.0f);
+					g.verts.clear();
+
+					// Total path length of this strip — denominator for the
+					// U coordinate. Skips the first sample because its
+					// seg_length is from the previous strip (or zero for a
+					// fresh strip). SR's algorithm — texture distributes by
+					// distance traveled, not by sample count.
+					float total_length = 0.0f;
+					for (std::size_t k = 1; k < n; ++k)
+						total_length += L.samples[run_begin + k].seg_length;
+					if (total_length < 0.001f) { run_begin = run_end; continue; }
+
+					// InvertNormal: SR flips the V coord per-strip based on
+					// the second sample's stored normal. Stored, not
+					// recomputed — so the strip's V orientation is decided
+					// once at the moment the strip became drawable and
+					// doesn't flip later as samples age out.
+					bool invert_v_strip = false;
+					if (!L.force_right_side_up && n >= 2)
+					{
+						invert_v_strip = (L.samples[run_begin + 1].normal.y > 0.0f);
+					}
+
+					float accum_length = 0.0f;
+					for (std::size_t k = 0; k < n; ++k)
+					{
+						const std::size_t i = run_begin + k;
+
+						// Use the normal stored at AddPoint time. No
+						// recomputation here — that's what made already
+						// emitted segments visually drift when the head
+						// moved.
+						const float nx = L.samples[i].normal.x;
+						const float ny = L.samples[i].normal.y;
+
+						if (k > 0) accum_length += L.samples[i].seg_length;
+						if (nx == 0.0f && ny == 0.0f) continue;  // degenerate sample, skip
+
+						const float t = L.samples[i].age / L.lifetime;
+						const float taper_factor = L.taper ? std::max(0.0f, 1.0f - t) : 1.0f;
+						const float half_w = L.size * 0.5f * taper_factor;
+
+						float alpha = L.opacity * track_alpha;
+						if (L.fade_out)
+							alpha *= std::max(0.0f, 1.0f - t * L.fade_out_speed);
+
+						float u_norm = accum_length / total_length;
+						if (L.flip_h) u_norm = 1.0f - u_norm;
+
+						// V is flipped both by the layer's flip_v setting
+						// AND by the per-strip InvertNormal. The XOR keeps
+						// the two flips composable.
+						const bool v_flipped = L.flip_v ^ invert_v_strip;
+						const float v_top = v_flipped ? 1.0f : 0.0f;
+						const float v_bot = v_flipped ? 0.0f : 1.0f;
+
+						const float px = L.samples[i].pos.x;
+						const float py = L.samples[i].pos.y;
+						const float top_x = px + nx * half_w - cam.position.x;
+						const float top_y = py + ny * half_w - cam.position.y;
+						const float bot_x = px - nx * half_w - cam.position.x;
+						const float bot_y = py - ny * half_w - cam.position.y;
+
+						push_vert(top_x, top_y, u_norm, v_top, L.color[0], L.color[1], L.color[2], alpha);
+						push_vert(bot_x, bot_y, u_norm, v_bot, L.color[0], L.color[1], L.color[2], alpha);
+					}
+
+					const GLsizei vert_count = static_cast<GLsizei>(g.verts.size() / k_stride_floats);
+					if (vert_count >= 2)
+					{
+						ensure_vbo_capacity(vert_count);
+						glBindBuffer(GL_ARRAY_BUFFER, g.vbo);
+						glBufferSubData(GL_ARRAY_BUFFER, 0,
+							g.verts.size() * sizeof(float), g.verts.data());
+						glDrawArrays(GL_TRIANGLE_STRIP, 0, vert_count);
+					}
 				}
-
-				float accum_length = 0.0f;
-				for (std::size_t k = 0; k < n; ++k)
-				{
-					const std::size_t i = run_begin + k;
-
-					// Use the normal stored at AddPoint time. No
-					// recomputation here — that's what made already
-					// emitted segments visually drift when the head
-					// moved.
-					const float nx = L.samples[i].normal.x;
-					const float ny = L.samples[i].normal.y;
-
-					if (k > 0) accum_length += L.samples[i].seg_length;
-					if (nx == 0.0f && ny == 0.0f) continue;  // degenerate sample, skip
-
-					const float t = L.samples[i].age / L.lifetime;
-					const float taper_factor = L.taper ? std::max(0.0f, 1.0f - t) : 1.0f;
-					const float half_w = L.size * 0.5f * taper_factor;
-
-					float alpha = L.opacity;
-					if (L.fade_out)
-						alpha *= std::max(0.0f, 1.0f - t * L.fade_out_speed);
-
-					float u_norm = accum_length / total_length;
-					if (L.flip_h) u_norm = 1.0f - u_norm;
-
-					// V is flipped both by the layer's flip_v setting
-					// AND by the per-strip InvertNormal. The XOR keeps
-					// the two flips composable.
-					const bool v_flipped = L.flip_v ^ invert_v_strip;
-					const float v_top = v_flipped ? 1.0f : 0.0f;
-					const float v_bot = v_flipped ? 0.0f : 1.0f;
-
-					const float px = L.samples[i].pos.x;
-					const float py = L.samples[i].pos.y;
-					const float top_x = px + nx * half_w - cam.position.x;
-					const float top_y = py + ny * half_w - cam.position.y;
-					const float bot_x = px - nx * half_w - cam.position.x;
-					const float bot_y = py - ny * half_w - cam.position.y;
-
-					push_vert(top_x, top_y, u_norm, v_top, L.color[0], L.color[1], L.color[2], alpha);
-					push_vert(bot_x, bot_y, u_norm, v_bot, L.color[0], L.color[1], L.color[2], alpha);
-				}
-
-				const GLsizei vert_count = static_cast<GLsizei>(g.verts.size() / k_stride_floats);
-				if (vert_count >= 2)
-				{
-					ensure_vbo_capacity(vert_count);
-					glBindBuffer(GL_ARRAY_BUFFER, g.vbo);
-					glBufferSubData(GL_ARRAY_BUFFER, 0,
-						g.verts.size() * sizeof(float), g.verts.data());
-					glDrawArrays(GL_TRIANGLE_STRIP, 0, vert_count);
-				}
+				run_begin = run_end;
 			}
-			run_begin = run_end;
 		}
 	}
 }

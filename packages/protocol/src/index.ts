@@ -5,7 +5,7 @@
 // change, update both this file AND the C++ sr_get_local_snapshot /
 // sr_push_ghost signatures in the same commit.
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type RGB = readonly [r: number, g: number, b: number];
 
@@ -156,6 +156,26 @@ export type SnapshotOut = {
 };
 
 // ──────────────────────────────────────────────────────────────────────
+// Per-player .srt trail relay. Each client base64-encodes its picked
+// .srt zip and sends it once on game start (and again whenever the
+// user picks a different one). The server caches one blob per player
+// in the room and replays peers' blobs to a fresh joiner so late
+// arrivals see everyone's trail. Cap matches the server validator
+// (~285 KB raw → ~384 KB base64).
+// ──────────────────────────────────────────────────────────────────────
+
+export type TrailShareIn = {
+	type: "trail_share";
+	body: string; // base64-encoded .srt zip, or empty string to clear
+};
+
+export type TrailShareOut = {
+	type: "trail_share";
+	playerId: string;
+	body: string; // empty string means the peer cleared their trail
+};
+
+// ──────────────────────────────────────────────────────────────────────
 // Chat commands — server is a dumb relay. The requester picks the
 // destination position (usually the current world coords of some peer)
 // and the server echoes the message to everyone. The CLIENT whose
@@ -190,6 +210,7 @@ export type ClientMsg =
 	| StartGame
 	| ChatSend
 	| SnapshotIn
+	| TrailShareIn
 	| TpRequest
 	| SetRoomVisibility
 	| SubscribePublicRooms
@@ -223,6 +244,7 @@ export type ServerMsg =
 	| GameStarted
 	| ChatMsg
 	| SnapshotOut
+	| TrailShareOut
 	| TpRelay
 	| PublicRoomsList
 	| ErrorMsg;

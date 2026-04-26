@@ -60,7 +60,14 @@ function saveTargetFps(fps: number): void {
 	}
 }
 
-export type Identity = { name: string; color: RGB };
+export type Identity = {
+	name: string;
+	color: RGB;
+	// Optional .srt trail picked by the user. Persisted to localStorage
+	// as a base64-encoded zip blob so it survives reconnects; broadcast
+	// to peers via the WS `trail_share` message on game start.
+	trail: { name: string; b64: string } | null;
+};
 
 function loadIdentity(): Identity {
 	try {
@@ -72,13 +79,25 @@ function loadIdentity(): Identity {
 				Array.isArray(parsed.color) &&
 				parsed.color.length === 3
 			) {
-				return { name: parsed.name, color: parsed.color as RGB };
+				let trail: Identity["trail"] = null;
+				if (
+					parsed.trail &&
+					typeof parsed.trail === "object" &&
+					typeof (parsed.trail as { name?: unknown }).name === "string" &&
+					typeof (parsed.trail as { b64?: unknown }).b64 === "string"
+				) {
+					trail = {
+						name: (parsed.trail as { name: string }).name,
+						b64: (parsed.trail as { b64: string }).b64,
+					};
+				}
+				return { name: parsed.name, color: parsed.color as RGB, trail };
 			}
 		}
 	} catch {
 		// fall through
 	}
-	return { name: "", color: randomColor() };
+	return { name: "", color: randomColor(), trail: null };
 }
 
 function saveIdentity(i: Identity): void {

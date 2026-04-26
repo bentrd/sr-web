@@ -13,6 +13,10 @@ type ServerPlayer = {
 	name: string;
 	color: RGB;
 	ws: ServerWebSocket<WsData>;
+	// Latest base64-encoded .srt blob this player shared. Empty/missing
+	// means they haven't picked a trail yet (or explicitly cleared it).
+	// Replayed to fresh joiners so late arrivals see everyone's trail.
+	trailB64?: string;
 };
 
 export type CreateRoomOptions = {
@@ -210,6 +214,29 @@ export class RoomStore {
 			maxPlayers: room.maxPlayers,
 			public: room.isPublic,
 		};
+	}
+
+	// Cache the latest .srt blob for a player. Empty string is allowed
+	// (means "cleared"); null/undefined would mean "never set" which the
+	// peer-replay logic distinguishes by checking trailB64 != null.
+	setPlayerTrail(room: Room, playerId: string, b64: string): void {
+		const p = room.players.get(playerId);
+		if (!p) return;
+		p.trailB64 = b64;
+		room.lastActivityAt = Date.now();
+	}
+
+	// Snapshot of every other player's stored trail blob in this room.
+	// Used to replay cached trails to a fresh joiner so they see everyone
+	// from frame 1 instead of waiting for each peer's next broadcast.
+	peerTrails(room: Room, exceptPlayerId: string): Array<{ playerId: string; body: string }> {
+		const out: Array<{ playerId: string; body: string }> = [];
+		for (const p of room.players.values()) {
+			if (p.id === exceptPlayerId) continue;
+			if (typeof p.trailB64 !== "string" || p.trailB64.length === 0) continue;
+			out.push({ playerId: p.id, body: p.trailB64 });
+		}
+		return out;
 	}
 
 	// Host-only: toggle a room's public/private flag mid-session.

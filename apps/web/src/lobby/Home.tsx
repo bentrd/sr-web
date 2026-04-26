@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../state/AppState";
 import { hexToRgb, rgbToCss, rgbToHex } from "./color";
 import { MAPS } from "./maps";
 import { ControlsModal } from "./ControlsModal";
+import { parseSrt, bytesToBase64 } from "../game/trail/parseSrt";
 
 export function Home(): JSX.Element {
 	const {
@@ -27,6 +28,31 @@ export function Home(): JSX.Element {
 	const [maxPlayers, setMaxPlayers] = useState<number>(-1);
 	const [isPublic, setIsPublic] = useState<boolean>(false);
 	const [filter, setFilter] = useState<string>("");
+	const trailFileRef = useRef<HTMLInputElement | null>(null);
+	const [trailError, setTrailError] = useState<string | null>(null);
+
+	async function handleTrailFile(file: File): Promise<void> {
+		setTrailError(null);
+		try {
+			// Hard cap mirrors the server validator (~285 KB raw → 384 KB
+			// base64). Bail before allocating to avoid a UI hitch.
+			if (file.size > 285 * 1024) {
+				throw new Error("file is over 285 KB");
+			}
+			const buf = new Uint8Array(await file.arrayBuffer());
+			parseSrt(buf); // validate; throws on malformed zip / missing settings
+			const b64 = bytesToBase64(buf);
+			const displayBase = file.name.replace(/\.srt$/i, "");
+			setIdentity({ ...identity, trail: { name: displayBase, b64 } });
+		} catch (e) {
+			setTrailError(e instanceof Error ? e.message : "could not read .srt");
+		}
+	}
+
+	function handleClearTrail(): void {
+		setTrailError(null);
+		setIdentity({ ...identity, trail: null });
+	}
 
 	const effectiveDisplayName =
 		displayName.trim().length > 0
@@ -167,6 +193,43 @@ export function Home(): JSX.Element {
 							noName ? "placeholder:text-amber-300/70" : ""
 						}`}
 					/>
+					<input
+						ref={trailFileRef}
+						type="file"
+						accept=".srt,application/zip"
+						className="hidden"
+						onChange={(e) => {
+							const f = e.target.files?.[0];
+							if (f) void handleTrailFile(f);
+							// Reset so picking the same file again still fires onChange.
+							e.target.value = "";
+						}}
+					/>
+					<button
+						type="button"
+						onClick={() => trailFileRef.current?.click()}
+						title={
+							trailError
+								? `Trail import failed: ${trailError}`
+								: identity.trail
+									? `Click to change. Right-click to clear.`
+									: "Pick a .srt trail file"
+						}
+						onContextMenu={(e) => {
+							e.preventDefault();
+							handleClearTrail();
+						}}
+						className={`flex h-9 max-w-[10rem] items-center gap-1.5 truncate rounded-lg border-0 bg-transparent px-3 text-xs font-medium hover:bg-zinc-800 ${
+							trailError
+								? "text-red-300 hover:text-red-200"
+								: identity.trail
+									? "text-emerald-300 hover:text-emerald-200"
+									: "text-zinc-400 hover:text-zinc-200"
+						}`}
+					>
+						<span className="text-base leading-none" aria-hidden>{identity.trail ? "✓" : "✦"}</span>
+						<span className="truncate">{identity.trail?.name ?? "Trail"}</span>
+					</button>
 					<button
 						type="button"
 						onClick={() => setControlsOpen(true)}

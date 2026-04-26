@@ -159,6 +159,39 @@ export function OptionsModal({ open, onClose }: OptionsModalProps): JSX.Element 
 					</div>
 				</div>
 
+				<div className="visual-section">
+					<div className="visual-row-label">
+						<div>Show other players' trails</div>
+						<div className="visual-hint">Renders peers' .srt trails at half opacity</div>
+					</div>
+					<div role="radiogroup" aria-label="Show other players' trails" className="seg-toggle">
+						<button
+							type="button"
+							role="radio"
+							aria-checked={!visuals.showGhostTrails}
+							onClick={() => setVisuals({ ...visuals, showGhostTrails: false })}
+							className={`seg-toggle-btn ${
+								!visuals.showGhostTrails ? "seg-toggle-active" : ""
+							}`}
+							title="Hide all peer trails"
+						>
+							Off
+						</button>
+						<button
+							type="button"
+							role="radio"
+							aria-checked={visuals.showGhostTrails}
+							onClick={() => setVisuals({ ...visuals, showGhostTrails: true })}
+							className={`seg-toggle-btn ${
+								visuals.showGhostTrails ? "seg-toggle-active" : ""
+							}`}
+							title="Render peer trails (default)"
+						>
+							On
+						</button>
+					</div>
+				</div>
+
 				<div className="fps-row">
 					<label className="bindings-label" htmlFor="head-size-slider">
 						Grapple head size

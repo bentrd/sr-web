@@ -5,6 +5,11 @@ import { normaliseCode } from "./codes";
 
 const PORT = Number(process.env.PORT ?? 4000);
 
+// Hard cap on a single .srt blob's base64 size. Real workshop trails
+// run 30–200 KB (raw ZIP); we allow ~285 KB raw → ~384 KB base64 to
+// give headroom for animated trails with bigger sprite sheets.
+const TRAIL_B64_MAX = 384 * 1024;
+
 const store = new RoomStore();
 
 function send(ws: ServerWebSocket<WsData>, msg: ServerMsg): void {
@@ -189,6 +194,17 @@ const server = Bun.serve<WsData, never>({
 						}, player.id);
 						chatSystem(result.code, `${player.name} joined`);
 					}
+					// Replay each other player's cached .srt blob so the
+					// joiner sees everyone's trail without waiting for their
+					// next broadcast. The joiner's own trail (if any) is
+					// excluded — they own the source of truth for their own.
+					for (const peer of store.peerTrails(result, player.id)) {
+						send(ws, {
+							type: "trail_share",
+							playerId: peer.playerId,
+							body: peer.body,
+						});
+					}
 					return;
 				}
 
@@ -266,6 +282,33 @@ const server = Bun.serve<WsData, never>({
 						room,
 						{
 							type: "snapshot",
+							playerId: ws.data.playerId,
+							body: msg.body,
+						},
+						ws.data.playerId,
+					);
+					return;
+				}
+
+				case "trail_share": {
+					if (!ws.data.roomCode) return;
+					const room = store.getRoom(ws.data.roomCode);
+					if (!room) return;
+					if (typeof msg.body !== "string" || msg.body.length > TRAIL_B64_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "trail_share body must be base64 string under cap",
+						});
+					}
+					// Cache the blob so late joiners can be backfilled, then
+					// fan out to peers. Empty string is a "cleared trail"
+					// marker — peers should drop the sender's trail track.
+					store.setPlayerTrail(room, ws.data.playerId, msg.body);
+					store.broadcast(
+						room,
+						{
+							type: "trail_share",
 							playerId: ws.data.playerId,
 							body: msg.body,
 						},

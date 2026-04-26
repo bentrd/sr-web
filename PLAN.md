@@ -287,6 +287,17 @@ When picking up a task: tick the box in a commit *before* starting (claim it), o
 - [x] **JS wiring**: `apps/web/src/game/trail/loadTrail.ts` fetches manifest + .trail + PNGs (decode via Image+canvas), pushes RGBA bytes via `sr_trail_register_image`, then `sr_trail_add_layer` per parsed layer. Wire into `Game.tsx` after `sr_load_map`.
 - [x] **Exit gate**: `bun run collect-trails` succeeds, `bash scripts/build-wasm.sh` rebuilds WASM with the 3 new exports verified in sr.js (`_sr_trail_clear`, `_sr_trail_register_image`, `_sr_trail_add_layer`), `bunx tsc --noEmit` + `bun run build` both green, dist bundle contains `trails/goldilocks/{settings.trail,13/14/16.png}` + `trails/manifest.json`. Live browser test deferred to next play session.
 
+*v2: user-picked `.srt` import, per-player tracks (local + each ghost), ghost trails at half opacity, "show other players' trails" toggle.*
+
+- [x] **Trail subsystem refactor (C++)**: `trail.{h,cpp}` keyed by `track_id` (`""` = local, peer id = ghost) via `unordered_map<string, track>`. Per-track `opacity_mul` (0.5 for ghosts) multiplied into vertex alpha at draw; per-track `visible` flag for the toggle. New helpers `clear_track`, `set_track_opacity`, `set_track_visible`. ALWAYS-layer strip-break grace tightened to 0.001s (matches SUPERSPEED).
+- [x] **C ABI extensions**: `sr_trail_clear_track`, `sr_trail_set_track_opacity`, `sr_trail_set_track_visible`; existing `sr_trail_register_image` / `sr_trail_add_layer` gained leading `track_id` arg. Ghost recording hooked into `sr_push_ghost`; cleanup in `sr_remove_ghost`.
+- [x] **Browser .srt parser**: `apps/web/src/game/trail/parseSrt.ts` (fflate-based zip extractor) + `bytesToBase64` / `base64ToBytes` helpers. Settings.trail + every PNG matched by basename.
+- [x] **Identity + visuals**: `Identity.trail` field (persisted to localStorage as `{ name, b64 }`), `visuals.showGhostTrails` flag (default on, persisted).
+- [x] **Lobby UI**: "Trail" pill button in `Home.tsx` opens hidden `<input type="file" accept=".srt">`; right-click clears. "Show other players' trails" Off/On toggle in `OptionsModal.tsx`.
+- [x] **Server relay**: `PROTOCOL_VERSION` 3→4. New `trail_share` WS message (in/out). `ServerPlayer.trailB64` cache + `setPlayerTrail` / `peerTrails`. Server validates ≤384KB body, broadcasts to room (excluding sender), and replays cached blobs on `join_room` so late joiners see existing trails.
+- [x] **Game.tsx wiring**: boot loads `identity.trail` (or default) into track `""`; broadcasts own `trail_share` once WASM ready (and on swap); inbound `trail_share` → `loadTrailFromBytes(mod, peerId, …)` + `setTrackOpacity(0.5)` + `setTrackVisible(showGhostTrails)`; `player_left` → `clearTrack`; effect re-applies visibility to all loaded peer tracks when toggle flips.
+- [x] **Exit gate**: `bun run typecheck` + `bun run build:wasm` green; reviewer pass APPROVED with no critical/major issues. End-to-end browser test deferred to next play session.
+
 ---
 
 ## Non-goals

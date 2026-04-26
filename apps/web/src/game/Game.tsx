@@ -21,7 +21,8 @@ import { loadSrModule, type SrModule } from "../wasm/loadModule";
 import { base64ToBytes, bytesToBase64, decodeSnapshot, type DecodedSnapshot } from "./snapshotCodec";
 import { GAME_ACTIONS, eventToBinding } from "../state/bindings";
 import { speedColor } from "../state/visuals";
-import { loadActiveTrail } from "./trail/loadTrail";
+import { loadDefaultTrail, loadTrailFromBytes, bindTrailAbi } from "./trail/loadTrail";
+import { base64ToBytes as srtBase64ToBytes } from "./trail/parseSrt";
 
 // 60 Hz network send rate. Sim runs at ~300 Hz inside WASM, render at
 // monitor refresh — the three are deliberately decoupled (see AGENTS.md).
@@ -233,6 +234,11 @@ export function Game(): JSX.Element {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const abiRef = useRef<CAbi | null>(null);
+	const trailAbiRef = useRef<ReturnType<typeof bindTrailAbi> | null>(null);
+	// Set of peer ids whose trail we've already loaded (so we don't
+	// re-decode the same .srt every time a peer reshares — they may
+	// resend on reconnect, but mid-session resends are debounced).
+	const loadedPeerTrailsRef = useRef<Set<string>>(new Set());
 	const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 	const [error, setError] = useState<string | null>(null);
 	const [hovered, setHovered] = useState<HoveredLabel | null>(null);
@@ -267,11 +273,17 @@ export function Game(): JSX.Element {
 				);
 				GAME_ACTIONS.forEach((action, idx) => abi.setBinding(idx, bindings[action].code));
 				abi.loadMap(`/maps/${room.mapId}.sr`);
-				// Trail is best-effort — a missing manifest must not block
-				// the game from starting. loadActiveTrail handles its own
-				// errors and warns to console; we just await for ordering.
+				// Trail is best-effort — failures must not block the game
+				// from starting. If the user picked a custom .srt, load
+				// that into the local player's track (id ""); otherwise
+				// fall back to the bundled default.
+				trailAbiRef.current = bindTrailAbi(mod);
 				try {
-					await loadActiveTrail(mod);
+					if (identity.trail) {
+						await loadTrailFromBytes(mod, "", srtBase64ToBytes(identity.trail.b64));
+					} else {
+						await loadDefaultTrail(mod, "");
+					}
 				} catch (e) {
 					console.warn("[trail] load failed", e);
 				}
@@ -372,6 +384,16 @@ export function Game(): JSX.Element {
 		return () => window.removeEventListener("keydown", onKey, true);
 	}, [status, bindings.reset.code, bindings.save_state.code, bindings.load_state.code]);
 
+	// Broadcast our own .srt blob to the room once the WASM is ready
+	// (and again whenever the user picks a different one). Empty body
+	// = explicitly cleared; the server caches that too so late joiners
+	// don't get a stale blob from a prior session.
+	useEffect(() => {
+		if (status !== "ready") return;
+		const body = identity.trail?.b64 ?? "";
+		ws.send({ type: "trail_share", body });
+	}, [status, ws, identity.trail]);
+
 	// Push the local snapshot at 30 Hz. Idle until the ABI is ready.
 	useEffect(() => {
 		if (status !== "ready") return;
@@ -425,7 +447,37 @@ export function Game(): JSX.Element {
 					abi.removeGhost(msg.id);
 					knownIdentitiesRef.current.delete(msg.id);
 					ghostBuffersRef.current.delete(msg.id);
+					trailAbiRef.current?.clearTrack(msg.id);
+					loadedPeerTrailsRef.current.delete(msg.id);
 					return;
+				case "trail_share": {
+					// A peer published (or cleared) their .srt. Self-shares
+					// shouldn't come back to us, but guard anyway.
+					if (msg.playerId === playerId) return;
+					const tAbi = trailAbiRef.current;
+					if (!tAbi) return;
+					if (msg.body === "") {
+						tAbi.clearTrack(msg.playerId);
+						loadedPeerTrailsRef.current.delete(msg.playerId);
+						return;
+					}
+					// Fire-and-forget: trail loading is async but we don't
+					// need to block snapshot processing on it. Errors are
+					// swallowed (a malformed .srt from a peer must not crash
+					// our renderer).
+					(async () => {
+						try {
+							const mod = await loadSrModule(canvasRef.current!);
+							await loadTrailFromBytes(mod, msg.playerId, srtBase64ToBytes(msg.body));
+							tAbi.setTrackOpacity(msg.playerId, 0.5);
+							tAbi.setTrackVisible(msg.playerId, visuals.showGhostTrails);
+							loadedPeerTrailsRef.current.add(msg.playerId);
+						} catch (e) {
+							console.warn(`[trail] failed to load peer trail for ${msg.playerId}`, e);
+						}
+					})();
+					return;
+				}
 				case "tp": {
 					// Only the named target acts on the teleport; everyone
 					// else just gets the announcement so chat could surface
@@ -441,7 +493,7 @@ export function Game(): JSX.Element {
 			}
 		});
 		return off;
-	}, [status, ws, playerId, peerInfo]);
+	}, [status, ws, playerId, peerInfo, visuals.showGhostTrails]);
 
 	// Listen for chat-issued /tp commands and turn them into WS messages.
 	// We resolve destinations to world coords here so ChatPanel doesn't
@@ -524,6 +576,18 @@ export function Game(): JSX.Element {
 		raf = requestAnimationFrame(step);
 		return () => cancelAnimationFrame(raf);
 	}, [status]);
+
+	// React to the "show other players' trails" toggle: walk every peer
+	// whose trail we've loaded and flip its visibility flag in the
+	// renderer. Cheap (one ABI call per peer) and only fires on toggle.
+	useEffect(() => {
+		if (status !== "ready") return;
+		const tAbi = trailAbiRef.current;
+		if (!tAbi) return;
+		for (const peerId of loadedPeerTrailsRef.current) {
+			tAbi.setTrackVisible(peerId, visuals.showGhostTrails);
+		}
+	}, [status, visuals.showGhostTrails]);
 
 	// Refresh known peer identities when the room roster changes (e.g. a
 	// late joiner picked a new color). push_ghost doesn't carry identity,

@@ -9,6 +9,7 @@
 
 import type { SrModule } from "../../wasm/loadModule";
 import { parseTrail, type TrailLayer } from "./parseTrail";
+import { parseSrt } from "./parseSrt";
 
 export interface TrailManifestEntry {
 	id: string;
@@ -22,8 +23,12 @@ const MANIFEST_URL = `${BASE}trails/manifest.json`;
 
 interface TrailAbi {
 	clear: () => void;
-	registerImage: (name: string, w: number, h: number, rgba: Uint8Array) => void;
+	clearTrack: (trackId: string) => void;
+	setTrackOpacity: (trackId: string, opacity: number) => void;
+	setTrackVisible: (trackId: string, visible: boolean) => void;
+	registerImage: (trackId: string, name: string, w: number, h: number, rgba: Uint8Array) => void;
 	addLayer: (
+		trackId: string,
 		imageName: string,
 		enabledMode: number,
 		lifetime: number,
@@ -39,10 +44,14 @@ interface TrailAbi {
 
 export function bindTrailAbi(mod: SrModule): TrailAbi {
 	const f_clear = mod.cwrap("sr_trail_clear", null, []);
+	const f_clear_track = mod.cwrap("sr_trail_clear_track", null, ["string"]);
+	const f_set_opacity = mod.cwrap("sr_trail_set_track_opacity", null, ["string", "number"]);
+	const f_set_visible = mod.cwrap("sr_trail_set_track_visible", null, ["string", "number"]);
 	const f_register = mod.cwrap("sr_trail_register_image", null,
-		["string", "number", "number", "number", "number"]);
+		["string", "string", "number", "number", "number", "number"]);
 	const f_add = mod.cwrap("sr_trail_add_layer", null, [
-		"string",
+		"string",                         // track_id
+		"string",                         // image_name
 		"number",                         // enabled_mode
 		"number",                         // lifetime
 		"number", "number", "number",     // color
@@ -57,22 +66,22 @@ export function bindTrailAbi(mod: SrModule): TrailAbi {
 
 	return {
 		clear: () => { f_clear(); },
-		registerImage: (name, w, h, rgba) => {
-			// Round-trip through the WASM heap so the C side can read the
-			// pixels directly. Free as soon as the upload returns — the
-			// texture lives in GL memory from then on.
+		clearTrack: (trackId) => { f_clear_track(trackId); },
+		setTrackOpacity: (trackId, opacity) => { f_set_opacity(trackId, opacity); },
+		setTrackVisible: (trackId, visible) => { f_set_visible(trackId, visible ? 1 : 0); },
+		registerImage: (trackId, name, w, h, rgba) => {
 			const ptr = mod._malloc(rgba.byteLength);
 			try {
 				mod.HEAPU8.set(rgba, ptr);
-				f_register(name, w, h, ptr, rgba.byteLength);
+				f_register(trackId, name, w, h, ptr, rgba.byteLength);
 			} finally {
 				mod._free(ptr);
 			}
 		},
-		addLayer: (imageName, enabledMode, lifetime, cr, cg, cb, opacity, size,
+		addLayer: (trackId, imageName, enabledMode, lifetime, cr, cg, cb, opacity, size,
 			fadeOut, fadeOutSpeed, taper, flipH, flipV, forceRightSideUp,
 			offX, offY, invertOffset) => {
-			f_add(imageName, enabledMode, lifetime, cr, cg, cb, opacity, size,
+			f_add(trackId, imageName, enabledMode, lifetime, cr, cg, cb, opacity, size,
 				fadeOut, fadeOutSpeed, taper, flipH, flipV, forceRightSideUp,
 				offX, offY, invertOffset);
 		},
@@ -124,55 +133,29 @@ function modeForLayer(L: TrailLayer): number {
 	return L.enabledMode === "ONLY AT SUPERSPEED" ? ENABLED_MODE_SUPERSPEED : ENABLED_MODE_ALWAYS;
 }
 
-// Pick which trail to load. MVP just hardcodes Goldilocks — once we
-// expose a chooser this becomes a per-room setting.
-const PREFERRED_ID = "goldilocks";
-
-export async function loadActiveTrail(mod: SrModule): Promise<void> {
-	let manifest: TrailManifestEntry[];
-	try {
-		manifest = await fetchManifest();
-	} catch (e) {
-		// No manifest = no trails collected on this dev. Silently no-op
-		// so the rest of the game still boots.
-		console.warn("[trail] manifest unavailable, skipping trail load", e);
-		return;
-	}
-	if (manifest.length === 0) {
-		console.warn("[trail] manifest is empty");
-		return;
-	}
-
-	const entry = manifest.find((m) => m.id === PREFERRED_ID) ?? manifest[0];
-	if (!entry) return;
-
+// Apply a parsed trail to a specific track. Used by both the default
+// manifest loader and the .srt loader — they only differ in where
+// the bytes/images come from.
+async function applyTrailToTrack(
+	mod: SrModule,
+	trackId: string,
+	settingsBuf: ArrayBuffer,
+	imageResults: { name: string; w: number; h: number; rgba: Uint8Array }[],
+): Promise<void> {
 	const abi = bindTrailAbi(mod);
-	abi.clear();
-
-	// Settings + image PNGs in parallel (PNGs dominate the wall-clock).
-	const [settingsBuf, imageResults] = await Promise.all([
-		fetchSettings(entry.id, entry.settings),
-		Promise.all(entry.images.map(async (name) => {
-			const out = await decodePng(`${BASE}trails/${entry.id}/${name}`);
-			return { name, ...out };
-		})),
-	]);
+	abi.clearTrack(trackId);
 
 	for (const im of imageResults) {
-		abi.registerImage(im.name, im.w, im.h, im.rgba);
+		abi.registerImage(trackId, im.name, im.w, im.h, im.rgba);
 	}
 
 	const def = parseTrail(settingsBuf);
 	for (const L of def.layers) {
-		// Skip explicitly-hidden layers — same behavior as the SR editor's
-		// Visible toggle.
 		if (!L.visible) continue;
-		// Layers that reference images we don't have are dropped silently
-		// (the C side would no-op them anyway, but skipping cuts a few
-		// wasted ABI calls per trail).
 		if (!imageResults.find((i) => i.name === L.imageName)) continue;
 
 		abi.addLayer(
+			trackId,
 			L.imageName,
 			modeForLayer(L),
 			L.lifetime,
@@ -186,5 +169,64 @@ export async function loadActiveTrail(mod: SrModule): Promise<void> {
 		);
 	}
 
-	console.log(`[trail] loaded "${def.name}" (${def.layers.length} layers, ${imageResults.length} images)`);
+	console.log(`[trail] loaded "${def.name}" into track "${trackId}" (${def.layers.length} layers, ${imageResults.length} images)`);
 }
+
+// Load the bundled default trail (Goldilocks if present) into the given track.
+// Used as a fallback when the user hasn't picked a custom .srt.
+export async function loadDefaultTrail(mod: SrModule, trackId: string): Promise<void> {
+	let manifest: TrailManifestEntry[];
+	try {
+		manifest = await fetchManifest();
+	} catch (e) {
+		console.warn("[trail] manifest unavailable, skipping trail load", e);
+		return;
+	}
+	if (manifest.length === 0) {
+		console.warn("[trail] manifest is empty");
+		return;
+	}
+
+	const entry = manifest.find((m) => m.id === PREFERRED_ID) ?? manifest[0];
+	if (!entry) return;
+
+	const [settingsBuf, imageResults] = await Promise.all([
+		fetchSettings(entry.id, entry.settings),
+		Promise.all(entry.images.map(async (name) => {
+			const out = await decodePng(`${BASE}trails/${entry.id}/${name}`);
+			return { name, ...out };
+		})),
+	]);
+
+	await applyTrailToTrack(mod, trackId, settingsBuf, imageResults);
+}
+
+// Load a user-picked .srt blob into the given track. Used for the
+// local player's chosen trail and (via WS replay) for each peer.
+export async function loadTrailFromBytes(
+	mod: SrModule,
+	trackId: string,
+	srtBytes: Uint8Array,
+): Promise<void> {
+	const payload = parseSrt(srtBytes);
+
+	// Decode every PNG via the same canvas pipeline the manifest path uses.
+	// We round-trip each PNG through a blob URL so decodePng's <img>
+	// pipeline works unchanged.
+	const imageResults = await Promise.all(payload.images.map(async (im) => {
+		const blob = new Blob([new Uint8Array(im.bytes)], { type: "image/png" });
+		const url = URL.createObjectURL(blob);
+		try {
+			const decoded = await decodePng(url);
+			return { name: im.name, ...decoded };
+		} finally {
+			URL.revokeObjectURL(url);
+		}
+	}));
+
+	await applyTrailToTrack(mod, trackId, payload.settings, imageResults);
+}
+
+// Pick which trail to load. MVP just hardcodes Goldilocks — once we
+// expose a chooser this becomes a per-room setting.
+const PREFERRED_ID = "goldilocks";

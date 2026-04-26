@@ -118,6 +118,17 @@ extern "C"
 			emu::vector{ gx_attach, gy_attach },
 			g_length, g_taut != 0,
 			emu::vector{ size_x, size_y });
+
+		// Record a trail sample for this ghost on their own trail
+		// track. JS pushes ghosts at ~60Hz (rAF), which matches the
+		// trail subsystem's internal sample period — anchor at the
+		// rectangle center (matches local player's anchor). No-op if
+		// this ghost has no .srt loaded yet (track has no layers).
+		trail::record_sample(id,
+			emu::vector{ pos_x + size_x * 0.5f, pos_y + size_y * 0.5f },
+			emu::vector{ vel_x, vel_y },
+			1.0f / 60.0f,
+			false);
 	}
 
 	void sr_set_ghost_identity(const char* id, const char* name, float r, float g, float b)
@@ -130,6 +141,7 @@ extern "C"
 	{
 		if (g_inst == nullptr || id == nullptr) return;
 		g_inst->m_playground.m_ghosts.remove(std::string{ id });
+		trail::clear_track(id);
 	}
 
 	// Serializes the local player's current state into out_buf. Returns
@@ -356,17 +368,40 @@ extern "C"
 		return 1;
 	}
 
-	// Drop every trail layer + every uploaded texture. Called by JS before
-	// re-pushing a fresh trail definition (e.g. on map / trail change).
+	// Drop every trail track (every layer + every uploaded texture).
+	// Rarely needed — trail per-track lifecycle is handled by
+	// sr_trail_clear_track on a per-player basis.
 	void sr_trail_clear()
 	{
 		trail::clear();
 	}
 
-	// Upload a 32-bit RGBA image (row-major, top-left origin) and key it
-	// by `name`. byte_count must be at least w*h*4 — we bail rather than
-	// risk reading past the JS-allocated buffer.
-	void sr_trail_register_image(const char* name, int w, int h,
+	// Drop one trail track. track_id "" or NULL = local player.
+	void sr_trail_clear_track(const char* track_id)
+	{
+		trail::clear_track(track_id);
+	}
+
+	// Per-track opacity multiplier (0..1). JS sets 0.5 for ghost
+	// tracks so they match the half-opacity ghost rectangle.
+	void sr_trail_set_track_opacity(const char* track_id, float opacity)
+	{
+		trail::set_track_opacity(track_id, opacity);
+	}
+
+	// Per-track visibility flag. JS uses this to implement the
+	// "show other players' trails" toggle in OptionsModal.
+	void sr_trail_set_track_visible(const char* track_id, int visible)
+	{
+		trail::set_track_visible(track_id, visible != 0);
+	}
+
+	// Upload a 32-bit RGBA image (row-major, top-left origin) into
+	// the named track and key it by `name`. byte_count must be at
+	// least w*h*4 — we bail rather than risk reading past the
+	// JS-allocated buffer.
+	void sr_trail_register_image(const char* track_id,
+		const char* name, int w, int h,
 		const std::uint8_t* rgba, std::size_t byte_count)
 	{
 		if (name == nullptr || rgba == nullptr) return;
@@ -374,13 +409,15 @@ extern "C"
 		const std::size_t needed = static_cast<std::size_t>(w) *
 								   static_cast<std::size_t>(h) * 4u;
 		if (byte_count < needed) return;
-		trail::register_image(name, w, h, rgba);
+		trail::register_image(track_id, name, w, h, rgba);
 	}
 
-	// Append one trail layer. Booleans cross the ABI as int (0/1) for
-	// Emscripten compatibility — wasm cwrap doesn't have a bool type.
-	// enabled_mode: 0 = ALWAYS, 1 = ONLY AT SUPERSPEED.
+	// Append one trail layer to the named track. Booleans cross the
+	// ABI as int (0/1) for Emscripten compatibility — wasm cwrap
+	// doesn't have a bool type. enabled_mode: 0 = ALWAYS,
+	// 1 = ONLY AT SUPERSPEED.
 	void sr_trail_add_layer(
+		const char* track_id,
 		const char* image_name,
 		int enabled_mode,
 		float lifetime_seconds,
@@ -392,7 +429,7 @@ extern "C"
 		int flip_h, int flip_v, int force_right_side_up,
 		float offset_x, float offset_y, int invert_offset)
 	{
-		trail::add_layer(image_name, enabled_mode, lifetime_seconds,
+		trail::add_layer(track_id, image_name, enabled_mode, lifetime_seconds,
 			color_r, color_g, color_b,
 			opacity, size_px,
 			fade_out != 0, fade_out_speed,

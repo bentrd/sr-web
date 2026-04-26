@@ -72,7 +72,8 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 		// Anchor at the player's body center so the ribbon attaches under
 		// the rectangle rather than the top-left corner.
 		emu::vector center{ a.position.x + a.size.x * 0.5f, a.position.y + a.size.y * 0.5f };
-		trail::record_sample(center, a.velocity, 33333.0f * 1e-7f, m_player->d.is_using_boost);
+		// Local player track id is "" — peers each get their own track keyed by ghost id.
+		trail::record_sample("", center, a.velocity, 33333.0f * 1e-7f, m_player->d.is_using_boost);
 	}
 
 	util::event event = m_helper.get_event(*m_player);
