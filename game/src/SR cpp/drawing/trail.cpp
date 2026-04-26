@@ -84,18 +84,23 @@ namespace
 	// 8 floats per vertex: x, y, u, v, r, g, b, a.
 	constexpr GLsizei k_stride_floats = 8;
 
-	// Sample throttle. 1/60s gives a smooth ribbon without flooding the
-	// vertex buffer at 300 Hz sim. With lifetime=2s that's ~120 samples/layer.
-	constexpr float k_sample_period = 1.0f / 60.0f;
+	// Sample on every sim tick (300 Hz). Throttling to 60 Hz looked
+	// stuttery near the player on >60 Hz monitors because the visible
+	// trail head was up to one render frame behind the live rectangle.
+	// 300 samples/sec × 2s lifetime × 4 layers ≈ 38 KB of vertex data per
+	// frame — cheap enough that we don't need a throttle.
+	constexpr float k_sample_period = 0.0f;
 
 	// Strip break threshold. If samples skipped a window longer than this
 	// (e.g. player sat below the superspeed gate for >50ms), the next push
 	// starts a new strip rather than connecting through the dead zone.
 	constexpr float k_strip_break_seconds = 0.05f;
 
-	// Speed gate for ONLY AT SUPERSPEED layers — matches the in-game UX
-	// (the speedometer tints amber/red around the same threshold).
-	constexpr float k_superspeed_threshold = 1200.0f;
+	// Speed gate for ONLY AT SUPERSPEED layers. SR's "trail speed" sits
+	// at the green band of our speedometer (>= 750 px/s), and the gate is
+	// horizontal-only so wall-running doesn't sneak the trail on while
+	// the player is barely moving forward.
+	constexpr float k_superspeed_threshold = 750.0f;
 
 	struct sample
 	{
@@ -336,8 +341,11 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds)
 		L.time_since_last_push += dt_seconds;
 		if (L.time_since_last_push < k_sample_period) continue;
 
+		// SR's superspeed condition is horizontal-only: a player sliding
+		// down a wall has plenty of vy but isn't running fast enough to
+		// merit a trail. std::abs handles both directions of travel.
 		const bool speed_ok = (L.enabled_mode == 0) ||
-			(std::sqrt(vel.x * vel.x + vel.y * vel.y) >= k_superspeed_threshold);
+			(std::abs(vel.x) >= k_superspeed_threshold);
 		if (!speed_ok) continue;
 
 		// invert_offset flips the X offset based on facing — the trail
