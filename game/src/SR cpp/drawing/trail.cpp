@@ -343,14 +343,14 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds)
 		L.time_since_last_push += dt_seconds;
 		if (L.time_since_last_push < k_sample_period) continue;
 
-		// Sample for every layer once we cross the trail-on gate. We
-		// deliberately don't gate ONLY_AT_SUPERSPEED layers more tightly
-		// at record time — otherwise the trail would have to grow back
-		// from empty whenever the player crosses the 1200 threshold.
-		// Same gate is applied at draw time, so anything below 750 is
-		// invisible regardless of buffer state.
-		const bool speed_ok = std::abs(vel.x) >= k_trail_on_threshold;
-		if (!speed_ok) continue;
+		// Per-layer record-time gate. ALWAYS layers stop recording below
+		// 750 |vx|; SUPERSPEED layers wait until 1200. Once a sample is
+		// in the buffer it ages out naturally — the trail behind the
+		// player keeps its lifecycle even if the player slows down.
+		const float gate = (L.enabled_mode == 0)
+			? k_trail_on_threshold
+			: k_superspeed_on_threshold;
+		if (std::abs(vel.x) < gate) continue;
 
 		// invert_offset flips the X offset based on facing — the trail
 		// asymmetry stays attached to the player's "rear" rather than a
@@ -370,17 +370,15 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds)
 	}
 }
 
-void trail::draw_all(const draw::camera& cam, float current_abs_vx)
+void trail::draw_all(const draw::camera& cam, float /*current_abs_vx*/)
 {
 	if (!g.initialized || g.layers.empty()) return;
 	if (cam.viewport_size.x <= 0.0f || cam.viewport_size.y <= 0.0f) return;
 
-	// Hard binary gates — no lerping. Below 750 nothing renders; the
-	// SUPERSPEED tier turns on at 1200. Authored opacity is preserved
-	// in both modes so the look matches the .trail file.
-	const bool trail_visible      = current_abs_vx >= k_trail_on_threshold;
-	const bool superspeed_visible = current_abs_vx >= k_superspeed_on_threshold;
-	if (!trail_visible) return;
+	// No draw-time speed gate. Visibility was decided at record_sample —
+	// every sample in the buffer earned its place by passing its layer's
+	// gate at the moment it was emitted, and from there ages out on its
+	// own clock independent of what the player is doing right now.
 
 	float proj[16];
 	make_ortho(proj, 0.0f, cam.viewport_size.x, cam.viewport_size.y, 0.0f);
@@ -396,10 +394,6 @@ void trail::draw_all(const draw::camera& cam, float current_abs_vx)
 		if (L.samples.size() < 2) continue;
 		auto img_it = g.images.find(L.image_name);
 		if (img_it == g.images.end()) continue;
-
-		// SUPERSPEED layers stay hidden until the second gate opens.
-		// ALWAYS layers got the trail_visible check at function entry.
-		if (L.enabled_mode != 0 && !superspeed_visible) continue;
 
 		glBindTexture(GL_TEXTURE_2D, img_it->second.tex);
 
