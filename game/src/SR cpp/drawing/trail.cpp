@@ -406,6 +406,8 @@ void trail::register_image(const char* track_id,
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	// One texture instance per strip — see U computation in draw_all
+	// (matches CEngine's CTrailDrawComponent: u = accum / strip_length).
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
@@ -601,11 +603,12 @@ void trail::draw_all(const draw::camera& cam, float /*current_abs_vx*/)
 				{
 					g.verts.clear();
 
-					// Total path length of this strip — denominator for the
-					// U coordinate. Skips the first sample because its
-					// seg_length is from the previous strip (or zero for a
-					// fresh strip). SR's algorithm — texture distributes by
-					// distance traveled, not by sample count.
+					// Total path length of this strip — denominator for
+					// the U coordinate. SR's CTrailDrawComponent does
+					// `u = accum_distance / cTrail.Length`, so the
+					// texture stretches to span the strip exactly once.
+					// Skips the first sample because its seg_length is
+					// from the previous strip (or zero for a fresh strip).
 					float total_length = 0.0f;
 					for (std::size_t k = 1; k < n; ++k)
 						total_length += L.samples[run_begin + k].seg_length;

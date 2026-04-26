@@ -8,7 +8,7 @@
 // and the unzip happens once when the user picks a file (lobby
 // thread, no rAF involved). Async would just add Promise overhead.
 
-import { unzipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 
 export interface SrtImage {
 	name: string;        // basename — e.g. "13.png"
@@ -77,4 +77,16 @@ export function base64ToBytes(b64: string): Uint8Array {
 	const out = new Uint8Array(binary.length);
 	for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
 	return out;
+}
+
+// Pack a flat list of files into a fresh .srt zip in memory. Used when
+// the lobby's folder picker hands us an unzipped trail directory (the
+// shape Steam Cloud sync stores them in, under
+// `Steam/userdata/<id>/207140/remote/trails/<name>/`). The .srt files
+// in `CEngineStorage/AllPlayers/Trails/Local/` are 22-byte stubs and
+// can't be used directly.
+export function buildSrt(files: readonly { name: string; bytes: Uint8Array }[]): Uint8Array {
+	const dir: Record<string, Uint8Array> = {};
+	for (const f of files) dir[f.name] = f.bytes;
+	return zipSync(dir);
 }
