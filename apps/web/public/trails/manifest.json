@@ -1,0 +1,12 @@
+[
+	{
+		"id": "goldilocks",
+		"displayName": "ST Goldilocks",
+		"settings": "settings.trail",
+		"images": [
+			"14.png",
+			"16.png",
+			"13.png"
+		]
+	}
+]

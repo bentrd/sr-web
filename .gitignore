@@ -20,6 +20,10 @@ apps/web/public/sr.wasm.map
 # Steam Workshop maps — see AGENTS.md, do NOT commit
 game/assets/maps/*.sr
 
+# Steam Workshop trails — collected per dev, not redistributed
+apps/web/public/trails/*/settings.trail
+apps/web/public/trails/*/*.png
+
 # Editor / OS
 .DS_Store
 .vscode/*

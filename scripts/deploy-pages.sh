@@ -25,6 +25,9 @@ DIST="$ROOT/apps/web/dist"
 echo "==> Collecting maps from Steam Workshop"
 bun run collect-maps
 
+echo "==> Collecting trails from Steam Workshop"
+bun run collect-trails
+
 echo "==> Building WASM (Emscripten)"
 bash "$ROOT/scripts/build-wasm.sh"
 

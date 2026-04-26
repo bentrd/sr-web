@@ -8,6 +8,7 @@
 		"build": "bun run --filter '*' build",
 		"typecheck": "bun run --filter '*' typecheck",
 		"collect-maps": "bun run scripts/collect-maps.ts",
+		"collect-trails": "bun run scripts/collect-trails.ts",
 		"build:wasm": "bash scripts/build-wasm.sh"
 	},
 	"devDependencies": {
