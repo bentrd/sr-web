@@ -108,6 +108,7 @@ namespace
 	struct sample
 	{
 		emu::vector pos{ 0.0f, 0.0f };
+		emu::vector vel{ 0.0f, 0.0f };
 		float age = 0.0f;
 		bool strip_start = false;
 	};
@@ -374,6 +375,7 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bo
 
 		L.samples.push_back(sample{
 			emu::vector{ pos.x + off.x, pos.y + off.y },
+			vel,
 			0.0f,
 			strip_start });
 		L.time_since_last_push = 0.0f;
@@ -422,25 +424,75 @@ void trail::draw_all(const draw::camera& cam, float /*current_abs_vx*/)
 			if (n >= 2)
 			{
 				g.verts.clear();
+				float prev_nx = 0.0f, prev_ny = 0.0f;
+				bool have_prev_n = false;
 				for (std::size_t k = 0; k < n; ++k)
 				{
 					const std::size_t i = run_begin + k;
-					emu::vector dir;
-					if (k == 0)
-						dir = emu::vector{ L.samples[i + 1].pos.x - L.samples[i].pos.x,
-											L.samples[i + 1].pos.y - L.samples[i].pos.y };
-					else if (k + 1 == n)
-						dir = emu::vector{ L.samples[i].pos.x - L.samples[i - 1].pos.x,
-											L.samples[i].pos.y - L.samples[i - 1].pos.y };
-					else
-						dir = emu::vector{ L.samples[i + 1].pos.x - L.samples[i - 1].pos.x,
-											L.samples[i + 1].pos.y - L.samples[i - 1].pos.y };
 
-					const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
-					if (len < 0.001f) continue;
+					// Prefer the stored velocity as the tangent — it's
+					// always well-defined, while the position-difference
+					// fallback collapses to zero at jump apices (samples
+					// i-1 and i+1 land at the same X coming up & coming
+					// down) and then triggers a perpendicular sign flip
+					// on the next vertex, twisting the ribbon. Position
+					// difference is the fallback for samples that somehow
+					// slipped through with zero velocity.
+					emu::vector dir = L.samples[i].vel;
+					float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+					if (len < 1.0f)
+					{
+						if (k == 0)
+							dir = emu::vector{ L.samples[i + 1].pos.x - L.samples[i].pos.x,
+												L.samples[i + 1].pos.y - L.samples[i].pos.y };
+						else if (k + 1 == n)
+							dir = emu::vector{ L.samples[i].pos.x - L.samples[i - 1].pos.x,
+												L.samples[i].pos.y - L.samples[i - 1].pos.y };
+						else
+							dir = emu::vector{ L.samples[i + 1].pos.x - L.samples[i - 1].pos.x,
+												L.samples[i + 1].pos.y - L.samples[i - 1].pos.y };
+						len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+					}
+					if (len < 0.001f)
+					{
+						if (!have_prev_n) continue;
+						// Reuse the previous normal so the strip stays
+						// continuous — better than dropping a vertex and
+						// triangulating across the gap.
+						const float t = L.samples[i].age / L.lifetime;
+						const float taper_factor = L.taper ? std::max(0.0f, 1.0f - t) : 1.0f;
+						const float half_w = L.size * 0.5f * taper_factor;
+						float alpha = L.opacity;
+						if (L.fade_out)
+							alpha *= std::max(0.0f, 1.0f - t * L.fade_out_speed);
+						float u_norm = (n > 1) ? (static_cast<float>(k) / static_cast<float>(n - 1)) : 0.0f;
+						if (L.flip_h) u_norm = 1.0f - u_norm;
+						const float v_top = L.flip_v ? 1.0f : 0.0f;
+						const float v_bot = L.flip_v ? 0.0f : 1.0f;
+						const float px = L.samples[i].pos.x;
+						const float py = L.samples[i].pos.y;
+						const float top_x = px + prev_nx * half_w - cam.position.x;
+						const float top_y = py + prev_ny * half_w - cam.position.y;
+						const float bot_x = px - prev_nx * half_w - cam.position.x;
+						const float bot_y = py - prev_ny * half_w - cam.position.y;
+						push_vert(top_x, top_y, u_norm, v_top, L.color[0], L.color[1], L.color[2], alpha);
+						push_vert(bot_x, bot_y, u_norm, v_bot, L.color[0], L.color[1], L.color[2], alpha);
+						continue;
+					}
 					// Perpendicular (rotated 90° CCW), normalized.
-					const float nx = -dir.y / len;
-					const float ny =  dir.x / len;
+					float nx = -dir.y / len;
+					float ny =  dir.x / len;
+
+					// Continuity guard: a real rotation between adjacent
+					// samples is < 90° per sim tick, so a sign flip here
+					// means we picked the wrong perpendicular branch.
+					// Flip back so top/bottom of the ribbon don't swap.
+					if (have_prev_n && (prev_nx * nx + prev_ny * ny) < 0.0f)
+					{
+						nx = -nx;
+						ny = -ny;
+					}
+					prev_nx = nx; prev_ny = ny; have_prev_n = true;
 
 					const float t = L.samples[i].age / L.lifetime;
 					const float taper_factor = L.taper ? std::max(0.0f, 1.0f - t) : 1.0f;
