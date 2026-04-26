@@ -6,6 +6,7 @@
 #include "emulation/player.h"
 #include "emulation/tile_actor.h"
 #include "drawing/draw_util.h"
+#include "drawing/trail.h"
 
 std::array<int, emu::input_count> input_map
 {
@@ -60,6 +61,19 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 	m_camera.viewport_size = viewport_size;
 	m_camera.update(33333, m_player->m_actor->d.position);
 
+	// 33333 = .NET TimeSpan ticks (100ns each) — see AGENTS.md. The trail
+	// subsystem throttles internally to ~60 Hz, so feeding it the raw 300 Hz
+	// sim cadence costs nothing extra and keeps the timing model uniform
+	// regardless of any future changes to the sim rate.
+	if (m_player != nullptr && m_player->m_actor != nullptr)
+	{
+		const auto& a = m_player->m_actor->d;
+		// Anchor at the player's body center so the ribbon attaches under
+		// the rectangle rather than the top-left corner.
+		emu::vector center{ a.position.x + a.size.x * 0.5f, a.position.y + a.size.y * 0.5f };
+		trail::record_sample(center, a.velocity, 33333.0f * 1e-7f);
+	}
+
 	util::event event = m_helper.get_event(*m_player);
 	m_last_event = event.evt;
 }
@@ -69,16 +83,21 @@ void playground::draw(const inputs&)
 	if (m_local_identity.is_set)
 		draw::set_local_player_color(m_local_identity.r, m_local_identity.g, m_local_identity.b);
 
-	draw::draw_state(&m_state, m_camera);
+	// World pass: tiles + non-player actors (grapple ropes, boost
+	// volumes, obstacles). Flush before drawing the trail so the trail's
+	// own shader run sits on top of the world batch.
+	draw::draw_state_world(&m_state, m_camera);
+	draw::flush_frame();
 
-	// Ghosts composite over world + local player at 50% alpha. They are
-	// never added to state.actors() — see AGENTS.md "Ghosts are render-only".
+	// Trail goes between world and player so it appears behind the
+	// rectangle, matching SpeedRunners' "TrailBehindLocalPlayersLayer".
+	trail::draw_all(m_camera);
+
+	// Player pass + ghosts. Single flush at the end ties them all into
+	// one batch (still two glDrawArrays — triangles + lines).
+	draw::draw_state_players(&m_state, m_camera);
 	auto ghosts = m_ghosts.snapshot();
 	for (const auto& [id, ghost] : ghosts)
 		draw::draw_ghost(ghost, m_camera);
-
-	// Flush all batched primitives in a handful of draw calls. See
-	// drawing/draw_util.cpp — this is the load-bearing perf optimization
-	// (was thousands of glDrawArrays per frame before batching).
 	draw::flush_frame();
 }

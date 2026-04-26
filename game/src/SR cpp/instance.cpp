@@ -5,6 +5,7 @@
 #include "instance.h"
 #include "command/command_functions.h"
 #include "drawing/draw_util.h"
+#include "drawing/trail.h"
 #include "drawing/visuals_config.h"
 
 instance::instance() :
@@ -207,6 +208,10 @@ void instance::enable_drawing(bool enable)
 		glewInit();
 #endif
 		draw::init();
+		// Trails ride on top of draw_util but use their own shader +
+		// textures. Init must follow draw::init() (which sets the blend
+		// func / pixel store config trail expects to inherit).
+		trail::init();
 		draw::set_viewport((int)window_width, (int)window_height);
 		// Initial clear color from the visuals config (defaults match the
 		// original dark gray). instance::draw() re-applies it every frame

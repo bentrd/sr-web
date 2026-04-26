@@ -14,6 +14,7 @@
 #include "sr_api.h"
 #include "../instance.h"
 #include "../playground.h"
+#include "../drawing/trail.h"
 #include "../drawing/visuals_config.h"
 #include "../emulation/player.h"
 #include "../emulation/grapple.h"
@@ -353,6 +354,51 @@ extern "C"
 		p->m_actor->d.velocity = g_save_state.velocity;
 		p->d.boost = g_save_state.boost;
 		return 1;
+	}
+
+	// Drop every trail layer + every uploaded texture. Called by JS before
+	// re-pushing a fresh trail definition (e.g. on map / trail change).
+	void sr_trail_clear()
+	{
+		trail::clear();
+	}
+
+	// Upload a 32-bit RGBA image (row-major, top-left origin) and key it
+	// by `name`. byte_count must be at least w*h*4 — we bail rather than
+	// risk reading past the JS-allocated buffer.
+	void sr_trail_register_image(const char* name, int w, int h,
+		const std::uint8_t* rgba, std::size_t byte_count)
+	{
+		if (name == nullptr || rgba == nullptr) return;
+		if (w <= 0 || h <= 0) return;
+		const std::size_t needed = static_cast<std::size_t>(w) *
+								   static_cast<std::size_t>(h) * 4u;
+		if (byte_count < needed) return;
+		trail::register_image(name, w, h, rgba);
+	}
+
+	// Append one trail layer. Booleans cross the ABI as int (0/1) for
+	// Emscripten compatibility — wasm cwrap doesn't have a bool type.
+	// enabled_mode: 0 = ALWAYS, 1 = ONLY AT SUPERSPEED.
+	void sr_trail_add_layer(
+		const char* image_name,
+		int enabled_mode,
+		float lifetime_seconds,
+		float color_r, float color_g, float color_b,
+		float opacity,
+		float size_px,
+		int fade_out, float fade_out_speed,
+		int taper,
+		int flip_h, int flip_v, int force_right_side_up,
+		float offset_x, float offset_y, int invert_offset)
+	{
+		trail::add_layer(image_name, enabled_mode, lifetime_seconds,
+			color_r, color_g, color_b,
+			opacity, size_px,
+			fade_out != 0, fade_out_speed,
+			taper != 0,
+			flip_h != 0, flip_v != 0, force_right_side_up != 0,
+			offset_x, offset_y, invert_offset != 0);
 	}
 
 	// Configure the WASM main loop's frame pacing.

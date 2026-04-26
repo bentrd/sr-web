@@ -63,6 +63,12 @@ namespace draw
 	void draw_obstacle(emu::obstacle* obstacle, const camera& camera);
 	void draw_actor_controller(emu::i_actor_controller* controller, const camera& camera);
 	void draw_state(emu::state* state, const camera& camera);
+	// Split halves of draw_state. Use these when something needs to render
+	// between world-space geometry and the local player (e.g. trails) — call
+	// flush_frame() between them so the inserted pass appears in the right
+	// z-order. draw_state() itself just chains both for convenience.
+	void draw_state_world(emu::state* state, const camera& camera);
+	void draw_state_players(emu::state* state, const camera& camera);
 
 	void draw_right_pot_map(const util::level_prep& prep, const camera& camera);
 	void draw_left_pot_map(const util::level_prep& prep, const camera& camera);

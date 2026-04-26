@@ -536,24 +536,34 @@ void draw::draw_actor_controller(i_actor_controller* controller, const camera& c
 		draw_obstacle(obstacle, camera);
 }
 
-void draw::draw_state(state* state, const camera& camera)
+void draw::draw_state_world(state* state, const camera& camera)
 {
 	if (state->m_collision_engine.m_level != nullptr)
 		draw_tile_layer(&(state->m_collision_engine.m_level->m_tile_layer), camera);
-	// Two-pass actor draw so the local player always sits above its
-	// grapple rope (and any other actors that might overlap it). Push
+	// Non-player actors (grapple rope, boost volumes, obstacles, …). Push
 	// order = paint order in the batched triangle stream, so emitting
-	// non-player actors first and players last is enough.
+	// these first guarantees the local player rectangle sits above the
+	// grapple rope when both belong to the same player.
 	for (auto& actor : state->actors())
 	{
 		if (dynamic_cast<emu::player*>(actor->m_controller.get()) == nullptr)
 			draw_actor_controller(actor->m_controller.get(), camera);
 	}
+}
+
+void draw::draw_state_players(state* state, const camera& camera)
+{
 	for (auto& actor : state->actors())
 	{
 		if (dynamic_cast<emu::player*>(actor->m_controller.get()) != nullptr)
 			draw_actor_controller(actor->m_controller.get(), camera);
 	}
+}
+
+void draw::draw_state(state* state, const camera& camera)
+{
+	draw_state_world(state, camera);
+	draw_state_players(state, camera);
 }
 
 void draw::draw_right_pot_map(const util::level_prep& prep, const camera& camera)
