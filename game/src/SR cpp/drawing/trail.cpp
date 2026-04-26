@@ -96,14 +96,21 @@ namespace
 	// quirk in the normal computation as a visible artifact.
 	constexpr float k_sample_period = 1.0f / 60.0f;
 
-	// Strip break threshold. If samples skipped a window longer than this,
-	// the next push starts a new strip rather than connecting through the
-	// dead zone. Set generous (300ms) so brief gate dropouts at jump
-	// apices — where hypot(vx,vy) can dip under 800 for a few ticks even
-	// during a continuous run — don't fragment the trail into a chain of
-	// short strips, which produces visible "knot" artifacts where the
-	// bright texture head of one strip meets the tail of the next.
-	constexpr float k_strip_break_seconds = 0.3f;
+	// Strip break thresholds, per layer mode. If the gate is closed for
+	// longer than the threshold, the next AddPoint starts a new strip.
+	//
+	// ALWAYS layers (hypot(vx,vy) >= 800 gate) get a generous 300 ms
+	// because they can briefly dip below 800 at jump apices during
+	// continuous play — fragmenting there produces "knot" artifacts.
+	//
+	// SUPERSPEED layers (|vx| >= 1200) get effectively zero grace
+	// because EVERY closed-gate moment is a real "stop recording"
+	// event: wall bounces flip vx through zero, sharp direction
+	// changes drop |vx| below 1200, etc. With grace, the next strip
+	// connects across the bounce, drawing a phantom ribbon between
+	// pre-bounce and post-bounce positions.
+	constexpr float k_break_grace_always      = 0.3f;
+	constexpr float k_break_grace_superspeed  = 0.001f;
 
 	// Two binary speed gates. ALWAYS layers turn on at hypot(vx,vy) >= 800
 	// (so a high-arc jump or a wallride still trails); ONLY_AT_SUPERSPEED
@@ -156,6 +163,12 @@ namespace
 
 		std::vector<sample> samples;
 		float time_since_last_push = 1.0f;  // > k_sample_period so first tick records
+		// Accumulated time the gate has been closed since the last
+		// AddPoint. Reset to 0 each tick the gate is open. Used to
+		// decide strip breaks — distinct from time_since_last_push,
+		// which also accumulates during normal sub-sample throttling
+		// and would false-positive the break check.
+		float time_gate_closed = 0.0f;
 	};
 
 	struct image_tex
@@ -413,7 +426,11 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bo
 			gate_open = boosting || (speed_xy >= k_trail_on_threshold);
 		else
 			gate_open = (speed_x >= k_superspeed_on_threshold);
-		if (!gate_open) continue;
+		if (!gate_open)
+		{
+			L.time_gate_closed += dt_seconds;
+			continue;
+		}
 
 		// invert_offset flips the X offset based on facing — the trail
 		// asymmetry stays attached to the player's "rear" rather than a
@@ -442,11 +459,16 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bo
 					last.seg_length = std::sqrt(dx * dx + dy * dy);
 				}
 			}
+			L.time_gate_closed = 0.0f;
 			continue;
 		}
 
+		const float break_grace = (L.enabled_mode == 0)
+			? k_break_grace_always
+			: k_break_grace_superspeed;
 		const bool strip_start = L.samples.empty() ||
-			L.time_since_last_push > k_strip_break_seconds;
+			L.time_gate_closed > break_grace;
+		L.time_gate_closed = 0.0f;
 
 		float seg_length = 0.0f;
 		if (!strip_start && !L.samples.empty())
