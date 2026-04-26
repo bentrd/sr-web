@@ -109,7 +109,7 @@ namespace
 	// changes drop |vx| below 1200, etc. With grace, the next strip
 	// connects across the bounce, drawing a phantom ribbon between
 	// pre-bounce and post-bounce positions.
-	constexpr float k_break_grace_always      = 0.3f;
+	constexpr float k_break_grace_always      = 0.001f;
 	constexpr float k_break_grace_superspeed  = 0.001f;
 
 	// Two binary speed gates. ALWAYS layers turn on at hypot(vx,vy) >= 800
