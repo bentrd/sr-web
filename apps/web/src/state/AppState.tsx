@@ -19,6 +19,7 @@ import { WsClient, type WsStatus } from "../net/ws";
 import { randomColor } from "../lobby/color";
 import { type Bindings, loadBindings, saveBindings } from "./bindings";
 import { type Visuals, loadVisuals, saveVisuals, VISUAL_DEFAULTS } from "./visuals";
+import { type SavedTrail, loadSavedTrails, saveSavedTrails } from "./savedTrails";
 
 const MAX_CHAT_HISTORY = 80;
 
@@ -60,13 +61,22 @@ function saveTargetFps(fps: number): void {
 	}
 }
 
+export type IdentityTrail = {
+	name: string;
+	b64: string;
+	// Optional data: URL for the trail's per-trail thumbnail
+	// (`image/png;base64,...`). Lets the pill/dropdown render the icon
+	// without re-unzipping the .srt blob on every render.
+	iconDataUrl?: string;
+};
+
 export type Identity = {
 	name: string;
 	color: RGB;
 	// Optional .srt trail picked by the user. Persisted to localStorage
 	// as a base64-encoded zip blob so it survives reconnects; broadcast
 	// to peers via the WS `trail_share` message on game start.
-	trail: { name: string; b64: string } | null;
+	trail: IdentityTrail | null;
 };
 
 function loadIdentity(): Identity {
@@ -86,9 +96,11 @@ function loadIdentity(): Identity {
 					typeof (parsed.trail as { name?: unknown }).name === "string" &&
 					typeof (parsed.trail as { b64?: unknown }).b64 === "string"
 				) {
+					const t = parsed.trail as { name: string; b64: string; iconDataUrl?: unknown };
 					trail = {
-						name: (parsed.trail as { name: string }).name,
-						b64: (parsed.trail as { b64: string }).b64,
+						name: t.name,
+						b64: t.b64,
+						...(typeof t.iconDataUrl === "string" ? { iconDataUrl: t.iconDataUrl } : {}),
 					};
 				}
 				return { name: parsed.name, color: parsed.color as RGB, trail };
@@ -121,6 +133,8 @@ export type AppState = {
 	visuals: Visuals;
 	setVisuals: (v: Visuals) => void;
 	resetVisuals: () => void;
+	savedTrails: readonly SavedTrail[];
+	setSavedTrails: (next: readonly SavedTrail[]) => void;
 	room: RoomState | null;
 	leaveRoom: () => void;
 	chat: readonly ChatMsg[];
@@ -145,6 +159,8 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 	const [bindings, setBindingsState] = useState<Bindings>(() => loadBindings());
 	const [targetFps, setTargetFpsState] = useState<number>(() => loadTargetFps());
 	const [visuals, setVisualsState] = useState<Visuals>(() => loadVisuals());
+	const [savedTrails, setSavedTrailsState] =
+		useState<readonly SavedTrail[]>(() => loadSavedTrails());
 	const [room, setRoom] = useState<RoomState | null>(null);
 	const [chat, setChat] = useState<readonly ChatMsg[]>([]);
 	const [lastError, setLastError] =
@@ -246,6 +262,11 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 		saveVisuals(VISUAL_DEFAULTS);
 	};
 
+	const setSavedTrails = (next: readonly SavedTrail[]): void => {
+		setSavedTrailsState(next);
+		saveSavedTrails(next);
+	};
+
 	const leaveRoom = (): void => {
 		ws.send({ type: "leave_room" });
 		setRoom(null);
@@ -281,6 +302,8 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 			visuals,
 			setVisuals,
 			resetVisuals,
+			savedTrails,
+			setSavedTrails,
 			room,
 			leaveRoom,
 			chat,
@@ -292,7 +315,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 			unsubscribePublicRooms,
 		}),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[ws, wsStatus, playerId, identity, bindings, targetFps, visuals, room, chat, lastError, publicRooms],
+		[ws, wsStatus, playerId, identity, bindings, targetFps, visuals, savedTrails, room, chat, lastError, publicRooms],
 	);
 
 	return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;

@@ -18,6 +18,10 @@ export interface SrtImage {
 export interface SrtPayload {
 	settings: ArrayBuffer;
 	images: SrtImage[];
+	// SR's per-trail thumbnail. Lives inside the .srt zip as a stem-less
+	// `icon` entry (PNG bytes, no extension). Optional — old user-built
+	// zips may omit it.
+	icon: Uint8Array | null;
 }
 
 function basename(path: string): string {
@@ -29,16 +33,26 @@ export function parseSrt(bytes: Uint8Array): SrtPayload {
 	const entries = unzipSync(bytes);
 
 	let settings: Uint8Array | null = null;
+	let icon: Uint8Array | null = null;
 	const images: SrtImage[] = [];
 
 	for (const [path, entryBytes] of Object.entries(entries)) {
 		const name = basename(path);
 		if (name === "" || name === ".DS_Store") continue;
-		if (name.toLowerCase() === "settings.trail") {
+		const lower = name.toLowerCase();
+		if (lower === "settings.trail") {
 			settings = entryBytes;
 			continue;
 		}
-		if (name.toLowerCase().endsWith(".png")) {
+		// SR ships the per-trail thumbnail as a stem-less `icon` entry
+		// (PNG bytes, no extension). Bundled presets shipped under
+		// `apps/web/public/trails/<id>/icon.png` use the extension —
+		// match either so user zips and bundled assets stay symmetric.
+		if (lower === "icon" || lower === "icon.png") {
+			icon = entryBytes;
+			continue;
+		}
+		if (lower.endsWith(".png")) {
 			images.push({ name, bytes: entryBytes });
 		}
 	}
@@ -56,7 +70,7 @@ export function parseSrt(bytes: Uint8Array): SrtPayload {
 	const ab = new ArrayBuffer(settings.byteLength);
 	new Uint8Array(ab).set(settings);
 
-	return { settings: ab, images };
+	return { settings: ab, images, icon };
 }
 
 // Browser-safe base64 helpers — used to round-trip an .srt blob through
