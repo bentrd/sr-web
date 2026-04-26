@@ -3,10 +3,20 @@
 		"id": "goldilocks",
 		"displayName": "ST Goldilocks",
 		"settings": "settings.trail",
+		"icon": "icon.png",
 		"images": [
 			"14.png",
 			"16.png",
 			"13.png"
+		]
+	},
+	{
+		"id": "orange-superspeed",
+		"displayName": "Orange Superspeed",
+		"settings": "settings.trail",
+		"icon": "icon.png",
+		"images": [
+			"Yellow Metanet Gloiw.png"
 		]
 	}
 ]
