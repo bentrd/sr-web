@@ -236,17 +236,42 @@ extern "C"
 		p->set_position(emu::vector{ x, y });
 	}
 
-	// Snap the local player back to the map's PlayerStart actor and zero
-	// their velocity. Bound to the "reset" UI key on the JS side.
+	// Snap the local player back to the map's PlayerStart and clear all
+	// transient physics state (velocity, jump_velocity, super_boost_force,
+	// grapple, boost charge, etc). Bound to the "reset" UI key on the JS
+	// side. Also snaps the camera so the user's view doesn't visibly pan
+	// from wherever they were back to spawn.
 	void sr_reset_local()
 	{
 		if (g_inst == nullptr) return;
 		auto& pg = g_inst->m_playground;
 		emu::player* p = pg.m_player;
 		if (p == nullptr || p->m_actor == nullptr) return;
-		const emu::level_actor& start = pg.m_level.get_actor("PlayerStart");
-		p->set_position(start.position);
-		p->m_actor->d.velocity = emu::vector{ 0.0f, 0.0f };
+
+		// playground::reset() calls player::reset() (clears velocity,
+		// jump_velocity, slide/grapple/wallclimb flags, …) and then
+		// re-positions to PlayerStart. We layer a few extras on top that
+		// player::reset() leaves alone:
+		//   - cancel an active grapple so the rope doesn't stay anchored
+		//   - clear stored boost charge + super-boost vectors so the next
+		//     tick can't re-launch us
+		//   - update_hitboxes() (player::set_position handles this; the
+		//     pg.reset() path uses actor::set_position directly so we
+		//     re-do it explicitly to keep the standing/sliding boxes
+		//     in sync with the new position)
+		if (p->d.is_grappling && p->m_grapple != nullptr)
+			p->cancel_grapple();
+		pg.reset();
+		p->d.boost = 0.0f;
+		p->d.boost_cooldown = 0.0f;
+		p->d.super_boost_force = emu::vec_zero;
+		p->d.super_boost_direction = emu::vec_zero;
+		p->update_hitboxes();
+
+		// Snap the camera to the player so the view doesn't lerp back to
+		// spawn over the next ~200ms. m_camera.position is the top-left of
+		// the viewport; offset by half the viewport so the player is centred.
+		pg.m_camera.position = p->m_actor->d.position - pg.m_camera.viewport_size / 2.0f;
 	}
 
 	// Visual palette setters. Colors are 0..1 floats. Read every frame
