@@ -96,11 +96,12 @@ namespace
 	// starts a new strip rather than connecting through the dead zone.
 	constexpr float k_strip_break_seconds = 0.05f;
 
-	// Two binary speed gates (horizontal velocity only). At |vx| < 750
-	// the entire trail is off, so we don't even bother sampling. Between
-	// 750 and 1200 the ALWAYS layers render at their authored opacity.
-	// At >= 1200 the ONLY_AT_SUPERSPEED layers also turn on. No fading —
-	// the user wants pop-on, pop-off behavior.
+	// Two binary speed gates. ALWAYS layers turn on at hypot(vx,vy) >= 750
+	// (so a high-arc jump or a wallride still trails); ONLY_AT_SUPERSPEED
+	// layers gate strictly on |vx| >= 1200 because that's the
+	// "horizontal-runway-supersonic" effect, not "going fast in any
+	// direction". Boost bypasses both: pressing the button kicks the trail
+	// in immediately, regardless of the player's current speed.
 	constexpr float k_trail_on_threshold       = 750.0f;
 	constexpr float k_superspeed_on_threshold  = 1200.0f;
 
@@ -327,9 +328,12 @@ void trail::add_layer(
 	g.layers.push_back(std::move(L));
 }
 
-void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds)
+void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bool boosting)
 {
 	if (!g.initialized || g.layers.empty()) return;
+
+	const float speed_xy = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+	const float speed_x  = std::abs(vel.x);
 
 	for (auto& L : g.layers)
 	{
@@ -343,14 +347,20 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds)
 		L.time_since_last_push += dt_seconds;
 		if (L.time_since_last_push < k_sample_period) continue;
 
-		// Per-layer record-time gate. ALWAYS layers stop recording below
-		// 750 |vx|; SUPERSPEED layers wait until 1200. Once a sample is
-		// in the buffer it ages out naturally — the trail behind the
-		// player keeps its lifecycle even if the player slows down.
-		const float gate = (L.enabled_mode == 0)
-			? k_trail_on_threshold
-			: k_superspeed_on_threshold;
-		if (std::abs(vel.x) < gate) continue;
+		// Per-layer record-time gate. Boost forces the trail on regardless
+		// of speed — the moment the player taps boost we want the streak
+		// out the back. Otherwise: ALWAYS layers gate on hypot(vx,vy) so a
+		// pure-vertical climb still trails; SUPERSPEED gates on |vx| since
+		// it's the "horizontal supersonic" assets specifically. Once
+		// emitted, samples age out independently of current speed.
+		bool gate_open = boosting;
+		if (!gate_open)
+		{
+			gate_open = (L.enabled_mode == 0)
+				? (speed_xy >= k_trail_on_threshold)
+				: (speed_x  >= k_superspeed_on_threshold);
+		}
+		if (!gate_open) continue;
 
 		// invert_offset flips the X offset based on facing — the trail
 		// asymmetry stays attached to the player's "rear" rather than a

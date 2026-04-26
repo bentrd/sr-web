@@ -46,9 +46,9 @@ namespace trail
 
 	// Called once per sim tick from playground::update. Pos/vel are in
 	// world coords; dt is seconds since the last record_sample call.
-	// Sampling is throttled to ~60 Hz internally so a 300 Hz sim doesn't
-	// over-fill the buffer.
-	void record_sample(emu::vector pos, emu::vector vel, float dt_seconds);
+	// `boosting` bypasses the speed gates so the trail kicks in the
+	// instant the player triggers boost, not when they reach 750/1200.
+	void record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bool boosting);
 
 	// Issues one glDrawArrays per visible strip per layer. Uses its own
 	// shader + VBO — does NOT batch through draw::flush_frame. Caller is
