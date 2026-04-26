@@ -424,79 +424,87 @@ void trail::draw_all(const draw::camera& cam, float /*current_abs_vx*/)
 			if (n >= 2)
 			{
 				g.verts.clear();
-				float prev_nx = 0.0f, prev_ny = 0.0f;
-				bool have_prev_n = false;
+				// Miter-limit cap. At very sharp turns the bisector
+				// scaling blows up; clamp to keep the ribbon from
+				// growing spikes. 2.5x means we tolerate joints up to
+				// ~2.5x normal width before falling back to the
+				// (clamped) bisector direction.
+				constexpr float k_miter_limit = 2.5f;
+
 				for (std::size_t k = 0; k < n; ++k)
 				{
 					const std::size_t i = run_begin + k;
 
-					// Prefer the stored velocity as the tangent — it's
-					// always well-defined, while the position-difference
-					// fallback collapses to zero at jump apices (samples
-					// i-1 and i+1 land at the same X coming up & coming
-					// down) and then triggers a perpendicular sign flip
-					// on the next vertex, twisting the ribbon. Position
-					// difference is the fallback for samples that somehow
-					// slipped through with zero velocity.
-					emu::vector dir = L.samples[i].vel;
-					float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
-					if (len < 1.0f)
+					// Incoming and outgoing edge directions in WORLD
+					// space, normalized. At endpoints one side is
+					// missing so we mirror the other; if both are zero
+					// (truly stationary) we fall back to the stored
+					// velocity direction.
+					float inx = 0.0f, iny = 0.0f;
+					if (k > 0)
 					{
-						if (k == 0)
-							dir = emu::vector{ L.samples[i + 1].pos.x - L.samples[i].pos.x,
-												L.samples[i + 1].pos.y - L.samples[i].pos.y };
-						else if (k + 1 == n)
-							dir = emu::vector{ L.samples[i].pos.x - L.samples[i - 1].pos.x,
-												L.samples[i].pos.y - L.samples[i - 1].pos.y };
-						else
-							dir = emu::vector{ L.samples[i + 1].pos.x - L.samples[i - 1].pos.x,
-												L.samples[i + 1].pos.y - L.samples[i - 1].pos.y };
-						len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+						const float dx = L.samples[i].pos.x - L.samples[i - 1].pos.x;
+						const float dy = L.samples[i].pos.y - L.samples[i - 1].pos.y;
+						const float dl = std::sqrt(dx * dx + dy * dy);
+						if (dl > 0.001f) { inx = dx / dl; iny = dy / dl; }
 					}
-					if (len < 0.001f)
+					float onx = 0.0f, ony = 0.0f;
+					if (k + 1 < n)
 					{
-						if (!have_prev_n) continue;
-						// Reuse the previous normal so the strip stays
-						// continuous — better than dropping a vertex and
-						// triangulating across the gap.
-						const float t = L.samples[i].age / L.lifetime;
-						const float taper_factor = L.taper ? std::max(0.0f, 1.0f - t) : 1.0f;
-						const float half_w = L.size * 0.5f * taper_factor;
-						float alpha = L.opacity;
-						if (L.fade_out)
-							alpha *= std::max(0.0f, 1.0f - t * L.fade_out_speed);
-						float u_norm = (n > 1) ? (static_cast<float>(k) / static_cast<float>(n - 1)) : 0.0f;
-						if (L.flip_h) u_norm = 1.0f - u_norm;
-						const float v_top = L.flip_v ? 1.0f : 0.0f;
-						const float v_bot = L.flip_v ? 0.0f : 1.0f;
-						const float px = L.samples[i].pos.x;
-						const float py = L.samples[i].pos.y;
-						const float top_x = px + prev_nx * half_w - cam.position.x;
-						const float top_y = py + prev_ny * half_w - cam.position.y;
-						const float bot_x = px - prev_nx * half_w - cam.position.x;
-						const float bot_y = py - prev_ny * half_w - cam.position.y;
-						push_vert(top_x, top_y, u_norm, v_top, L.color[0], L.color[1], L.color[2], alpha);
-						push_vert(bot_x, bot_y, u_norm, v_bot, L.color[0], L.color[1], L.color[2], alpha);
-						continue;
+						const float dx = L.samples[i + 1].pos.x - L.samples[i].pos.x;
+						const float dy = L.samples[i + 1].pos.y - L.samples[i].pos.y;
+						const float dl = std::sqrt(dx * dx + dy * dy);
+						if (dl > 0.001f) { onx = dx / dl; ony = dy / dl; }
 					}
-					// Perpendicular (rotated 90° CCW), normalized.
-					float nx = -dir.y / len;
-					float ny =  dir.x / len;
+					if (inx == 0.0f && iny == 0.0f && onx == 0.0f && ony == 0.0f)
+					{
+						const auto& v = L.samples[i].vel;
+						const float vl = std::sqrt(v.x * v.x + v.y * v.y);
+						if (vl < 0.001f) continue;  // truly no direction available
+						onx = v.x / vl; ony = v.y / vl;
+						inx = onx; iny = ony;
+					}
+					if (inx == 0.0f && iny == 0.0f) { inx = onx; iny = ony; }
+					if (onx == 0.0f && ony == 0.0f) { onx = inx; ony = iny; }
 
-					// Continuity guard: a real rotation between adjacent
-					// samples is < 90° per sim tick, so a sign flip here
-					// means we picked the wrong perpendicular branch.
-					// Flip back so top/bottom of the ribbon don't swap.
-					if (have_prev_n && (prev_nx * nx + prev_ny * ny) < 0.0f)
+					// Perpendiculars (rotated 90° CCW) of incoming /
+					// outgoing edges. Both rotated the same way, so
+					// they sit on the same side of the polyline and
+					// the bisector below picks the consistent ribbon
+					// orientation automatically — no continuity guard
+					// needed.
+					const float pn_in_x  = -iny, pn_in_y  = inx;
+					const float pn_out_x = -ony, pn_out_y = onx;
+
+					// Bisector of the two perpendiculars.
+					float mx = pn_in_x + pn_out_x;
+					float my = pn_in_y + pn_out_y;
+					float ml = std::sqrt(mx * mx + my * my);
+					float miter_scale = 1.0f;
+					if (ml < 0.001f)
 					{
-						nx = -nx;
-						ny = -ny;
+						// 180° turn — bisector is degenerate. Use the
+						// incoming perpendicular and accept a flat cap.
+						mx = pn_in_x; my = pn_in_y; ml = 1.0f;
 					}
-					prev_nx = nx; prev_ny = ny; have_prev_n = true;
+					else
+					{
+						mx /= ml; my /= ml;
+						// Length scaling that keeps the ribbon's outer
+						// edge perpendicular to each segment. cos_half
+						// is the cosine of half the turn angle: 1 on a
+						// straight line, → 0 at sharp turns.
+						const float cos_half = mx * pn_in_x + my * pn_in_y;
+						if (std::abs(cos_half) > 1e-3f)
+						{
+							miter_scale = 1.0f / std::abs(cos_half);
+							if (miter_scale > k_miter_limit) miter_scale = k_miter_limit;
+						}
+					}
 
 					const float t = L.samples[i].age / L.lifetime;
 					const float taper_factor = L.taper ? std::max(0.0f, 1.0f - t) : 1.0f;
-					const float half_w = L.size * 0.5f * taper_factor;
+					const float half_w = L.size * 0.5f * taper_factor * miter_scale;
 
 					float alpha = L.opacity;
 					if (L.fade_out)
@@ -509,10 +517,10 @@ void trail::draw_all(const draw::camera& cam, float /*current_abs_vx*/)
 
 					const float px = L.samples[i].pos.x;
 					const float py = L.samples[i].pos.y;
-					const float top_x = px + nx * half_w - cam.position.x;
-					const float top_y = py + ny * half_w - cam.position.y;
-					const float bot_x = px - nx * half_w - cam.position.x;
-					const float bot_y = py - ny * half_w - cam.position.y;
+					const float top_x = px + mx * half_w - cam.position.x;
+					const float top_y = py + my * half_w - cam.position.y;
+					const float bot_x = px - mx * half_w - cam.position.x;
+					const float bot_y = py - my * half_w - cam.position.y;
 
 					push_vert(top_x, top_y, u_norm, v_top, L.color[0], L.color[1], L.color[2], alpha);
 					push_vert(bot_x, bot_y, u_norm, v_bot, L.color[0], L.color[1], L.color[2], alpha);
