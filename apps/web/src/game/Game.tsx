@@ -21,6 +21,7 @@ import { loadSrModule, type SrModule } from "../wasm/loadModule";
 import { base64ToBytes, bytesToBase64, decodeSnapshot, type DecodedSnapshot } from "./snapshotCodec";
 import { GAME_ACTIONS, eventToBinding } from "../state/bindings";
 import { speedColor } from "../state/visuals";
+import { loadActiveTrail } from "./trail/loadTrail";
 
 // 60 Hz network send rate. Sim runs at ~300 Hz inside WASM, render at
 // monitor refresh — the three are deliberately decoupled (see AGENTS.md).
@@ -256,7 +257,7 @@ export function Game(): JSX.Element {
 		setStatus("loading");
 
 		loadSrModule(canvasRef.current)
-			.then((mod) => {
+			.then(async (mod) => {
 				if (cancelled) return;
 				const abi = bindCAbi(mod);
 				abiRef.current = abi;
@@ -266,6 +267,15 @@ export function Game(): JSX.Element {
 				);
 				GAME_ACTIONS.forEach((action, idx) => abi.setBinding(idx, bindings[action].code));
 				abi.loadMap(`/maps/${room.mapId}.sr`);
+				// Trail is best-effort — a missing manifest must not block
+				// the game from starting. loadActiveTrail handles its own
+				// errors and warns to console; we just await for ordering.
+				try {
+					await loadActiveTrail(mod);
+				} catch (e) {
+					console.warn("[trail] load failed", e);
+				}
+				if (cancelled) return;
 				setStatus("ready");
 			})
 			.catch((e: unknown) => {
