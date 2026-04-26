@@ -35,8 +35,8 @@ const COLOR_FIELDS: readonly ColorField[] = [
 	{ kind: "rgb",  key: "wallclimbStripe", label: "Wallclimb",         hint: "Climbable wall stripe" },
 	{ kind: "rgb",  key: "grappleCord",     label: "Grapple cord",      hint: "Rope" },
 	{ kind: "rgb",  key: "grappleHead",     label: "Grapple head",      hint: "Hook tip rectangle" },
-	{ kind: "rgba", key: "boostSection",    label: "Boost section",     hint: "Speed-boost strip" },
-	{ kind: "rgba", key: "boostPickup",     label: "Boost pickup",      hint: "Tinted super-boost volume" },
+	{ kind: "rgba", key: "boostSection",    label: "Boost pickup",      hint: "Tinted super-boost volume" },
+	{ kind: "rgba", key: "boostPickup",     label: "Boost section",     hint: "Speed-boost strip" },
 ] as const;
 
 const SPEEDOMETER_OPTIONS: readonly { value: SpeedometerMode; label: string; hint: string }[] = [

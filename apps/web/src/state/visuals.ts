@@ -30,7 +30,7 @@ export const VISUAL_DEFAULTS: Visuals = {
 	grappleCord: [0, 0, 0],
 	grappleHead: [1, 0, 0],
 	grappleHeadSize: 12,
-	boostSection: [0, 1, 0, 1],
+	boostSection: [0, 0.569, 1, 1],
 	boostPickup: [0, 1, 0, 0.1],
 	speedometer: "on",
 };
