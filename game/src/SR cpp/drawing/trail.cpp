@@ -84,12 +84,17 @@ namespace
 	// 8 floats per vertex: x, y, u, v, r, g, b, a.
 	constexpr GLsizei k_stride_floats = 8;
 
-	// Sample on every sim tick (300 Hz). Throttling to 60 Hz looked
-	// stuttery near the player on >60 Hz monitors because the visible
-	// trail head was up to one render frame behind the live rectangle.
-	// 300 samples/sec × 2s lifetime × 4 layers ≈ 38 KB of vertex data per
-	// frame — cheap enough that we don't need a throttle.
-	constexpr float k_sample_period = 0.0f;
+	// Sample at 60 Hz (matches SR's game-frame cadence — see
+	// SR.exe TrailDraw caller). Between samples we don't drop motion;
+	// the SetLastPoint-style code in record_sample MOVES the existing
+	// head to track the player exactly. So the head stays pinned to
+	// the live player position even on >60 Hz monitors, while the
+	// body keeps SR's sparse-sample geometry that the textures and
+	// the U-coord math were designed for. Sampling every sim tick
+	// (3.33ms) was producing 5x more vertices than SR ever sees,
+	// which compressed the U coord and exposed every numerical
+	// quirk in the normal computation as a visible artifact.
+	constexpr float k_sample_period = 1.0f / 60.0f;
 
 	// Strip break threshold. If samples skipped a window longer than this,
 	// the next push starts a new strip rather than connecting through the
@@ -357,21 +362,20 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bo
 			L.samples.erase(L.samples.begin());
 
 		L.time_since_last_push += dt_seconds;
-		if (L.time_since_last_push < k_sample_period) continue;
 
-		// Per-layer record-time gate. Boost forces the trail on regardless
-		// of speed — the moment the player taps boost we want the streak
-		// out the back. Otherwise: ALWAYS layers gate on hypot(vx,vy) so a
-		// pure-vertical climb still trails; SUPERSPEED gates on |vx| since
-		// it's the "horizontal supersonic" assets specifically. Once
-		// emitted, samples age out independently of current speed.
-		bool gate_open = boosting;
-		if (!gate_open)
-		{
-			gate_open = (L.enabled_mode == 0)
-				? (speed_xy >= k_trail_on_threshold)
-				: (speed_x  >= k_superspeed_on_threshold);
-		}
+		// Per-layer record-time gate. ALWAYS layers (enabled_mode==0)
+		// gate on hypot(vx,vy) so a pure-vertical climb still trails,
+		// AND boost forces them on regardless of speed (the user wants
+		// the base trail visible the moment boost is tapped).
+		// SUPERSPEED layers gate strictly on |vx| >= 1200 — boost does
+		// NOT trigger them; they're meant to read as "the player has
+		// reached actual supersonic horizontal speed". Once emitted,
+		// samples age out independently of current speed.
+		bool gate_open;
+		if (L.enabled_mode == 0)
+			gate_open = boosting || (speed_xy >= k_trail_on_threshold);
+		else
+			gate_open = (speed_x >= k_superspeed_on_threshold);
 		if (!gate_open) continue;
 
 		// invert_offset flips the X offset based on facing — the trail
@@ -380,11 +384,33 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bo
 		// left, so invert.
 		emu::vector off = L.offset;
 		if (L.invert_offset && vel.x < 0.0f) off.x = -off.x;
+		const emu::vector new_pos{ pos.x + off.x, pos.y + off.y };
+
+		// SR uses SetLastPoint between AddPoint calls to MOVE the head
+		// to the live player position. We mirror that: while the
+		// sample period hasn't elapsed, just slide the last sample.
+		// This keeps the visible head pinned to the player at render
+		// rate even though we only emit a new vertex every ~16.67ms.
+		if (L.time_since_last_push < k_sample_period)
+		{
+			if (!L.samples.empty())
+			{
+				auto& last = L.samples.back();
+				last.pos = new_pos;
+				if (!last.strip_start && L.samples.size() >= 2)
+				{
+					const auto& prev = L.samples[L.samples.size() - 2];
+					const float dx = new_pos.x - prev.pos.x;
+					const float dy = new_pos.y - prev.pos.y;
+					last.seg_length = std::sqrt(dx * dx + dy * dy);
+				}
+			}
+			continue;
+		}
 
 		const bool strip_start = L.samples.empty() ||
 			L.time_since_last_push > k_strip_break_seconds;
 
-		const emu::vector new_pos{ pos.x + off.x, pos.y + off.y };
 		float seg_length = 0.0f;
 		if (!strip_start && !L.samples.empty())
 		{
