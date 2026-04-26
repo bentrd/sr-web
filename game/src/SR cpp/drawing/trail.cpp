@@ -118,6 +118,14 @@ namespace
 	{
 		emu::vector pos{ 0.0f, 0.0f };
 		emu::vector vel{ 0.0f, 0.0f };
+		// Perpendicular, computed once at AddPoint time and frozen
+		// thereafter — SR's exact behavior. SetLastPoint never touches
+		// this; the head sample is dragged via position only. Without
+		// this, every frame's centered-difference normal recompute
+		// makes already-emitted ribbon segments visually shift as new
+		// samples come in, which the user noticed as the trail
+		// "updating already emitted ribbons".
+		emu::vector normal{ 0.0f, 0.0f };
 		// Distance from the previous sample in the same strip. SR uses
 		// this to map U-coords by accumulated path length instead of by
 		// vertex index — without it, dense bunching at slow points
@@ -237,6 +245,35 @@ namespace
 		g.verts.push_back(x); g.verts.push_back(y);
 		g.verts.push_back(u); g.verts.push_back(v);
 		g.verts.push_back(r); g.verts.push_back(gn); g.verts.push_back(bl); g.verts.push_back(a);
+	}
+
+	// Recompute and store sample[i]'s perpendicular. Mirrors SR's
+	// nYaTtVj1L4 — strip-boundary aware: an isNewStart sample uses
+	// itself as the missing prev neighbor, and if the next sample
+	// starts a new strip we use self for next too. Called only at
+	// AddPoint time (for the new sample and the previous-to-last);
+	// SetLastPoint never invokes this, which is what keeps already
+	// drawn ribbon segments stable instead of swimming as the head
+	// follows the player.
+	inline void update_normal(std::vector<sample>& s, std::size_t i)
+	{
+		if (i >= s.size()) return;
+		const std::size_t i_prev = s[i].strip_start ? i : (i > 0 ? i - 1 : i);
+		std::size_t i_next = (i + 1 < s.size()) ? i + 1 : i;
+		if (i_next != i && s[i_next].strip_start) i_next = i;
+		const float dx = s[i_next].pos.x - s[i_prev].pos.x;
+		const float dy = s[i_next].pos.y - s[i_prev].pos.y;
+		const float dl = std::sqrt(dx * dx + dy * dy);
+		if (dl > 0.001f)
+		{
+			s[i].normal.x = -dy / dl;
+			s[i].normal.y =  dx / dl;
+		}
+		else
+		{
+			s[i].normal.x = 0.0f;
+			s[i].normal.y = 0.0f;
+		}
 	}
 }
 
@@ -387,10 +424,10 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bo
 		const emu::vector new_pos{ pos.x + off.x, pos.y + off.y };
 
 		// SR uses SetLastPoint between AddPoint calls to MOVE the head
-		// to the live player position. We mirror that: while the
-		// sample period hasn't elapsed, just slide the last sample.
-		// This keeps the visible head pinned to the player at render
-		// rate even though we only emit a new vertex every ~16.67ms.
+		// to the live player position — position + seg_length only,
+		// no normal recompute. We mirror that exactly so the body of
+		// the trail stays frozen as it ages out, and only the head
+		// segment's geometry slides with the live player.
 		if (L.time_since_last_push < k_sample_period)
 		{
 			if (!L.samples.empty())
@@ -423,9 +460,21 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds, bo
 		L.samples.push_back(sample{
 			new_pos,
 			vel,
+			emu::vector{ 0.0f, 0.0f },  // normal — filled in below
 			seg_length,
 			0.0f,
 			strip_start });
+
+		// SR's AddPoint pattern: recompute the new last sample's
+		// normal AND the previous-to-last (its 'next' just changed).
+		// That's the only time normals are touched. From here on
+		// these two sample's normals are frozen, which means
+		// previously emitted ribbon segments don't shift around when
+		// the live player moves.
+		const std::size_t last_i = L.samples.size() - 1;
+		update_normal(L.samples, last_i);
+		if (last_i >= 1) update_normal(L.samples, last_i - 1);
+
 		L.time_since_last_push = 0.0f;
 	}
 }
@@ -483,24 +532,15 @@ void trail::draw_all(const draw::camera& cam, float /*current_abs_vx*/)
 					total_length += L.samples[run_begin + k].seg_length;
 				if (total_length < 0.001f) { run_begin = run_end; continue; }
 
-				// InvertNormal: SR flips the V coord per-strip when the
-				// trail's first segment's perpendicular points down in
-				// world space. Without this the texture appears
-				// mirrored when the player runs leftward (or any
-				// direction that makes the perpendicular's Y negative).
-				// Computed from the second sample's neighbor-difference
-				// direction, mirroring SR's nYaTtVj normal calc.
+				// InvertNormal: SR flips the V coord per-strip based on
+				// the second sample's stored normal. Stored, not
+				// recomputed — so the strip's V orientation is decided
+				// once at the moment the strip became drawable and
+				// doesn't flip later as samples age out.
 				bool invert_v_strip = false;
 				if (!L.force_right_side_up && n >= 2)
 				{
-					const float dx = L.samples[run_begin + 1].pos.x - L.samples[run_begin].pos.x;
-					const float dy = L.samples[run_begin + 1].pos.y - L.samples[run_begin].pos.y;
-					const float dl = std::sqrt(dx * dx + dy * dy);
-					if (dl > 0.001f)
-					{
-						const float first_normal_y = dx / dl;  // perp.y = dir.x / |dir|
-						invert_v_strip = (first_normal_y > 0.0f);
-					}
+					invert_v_strip = (L.samples[run_begin + 1].normal.y > 0.0f);
 				}
 
 				float accum_length = 0.0f;
@@ -508,30 +548,15 @@ void trail::draw_all(const draw::camera& cam, float /*current_abs_vx*/)
 				{
 					const std::size_t i = run_begin + k;
 
-					// Centered-difference normal — SR's nYaTtVj style.
-					// At strip boundaries we treat self as the missing
-					// neighbor (so a 1-sided difference falls out of
-					// the same formula).
-					const std::size_t i_prev = (k == 0) ? i : i - 1;
-					const std::size_t i_next = (k + 1 == n) ? i : i + 1;
-					float dx = L.samples[i_next].pos.x - L.samples[i_prev].pos.x;
-					float dy = L.samples[i_next].pos.y - L.samples[i_prev].pos.y;
-					float dl = std::sqrt(dx * dx + dy * dy);
-					if (dl < 0.001f)
-					{
-						// Fall back to stored velocity if neighbors
-						// collapsed (apex of vertical jump etc.).
-						const auto& v = L.samples[i].vel;
-						const float vl = std::sqrt(v.x * v.x + v.y * v.y);
-						if (vl < 0.001f) { accum_length += L.samples[i].seg_length; continue; }
-						dx = v.x; dy = v.y; dl = vl;
-					}
-					// Perpendicular (90° CCW), normalized — matches SR:
-					// normal.X = -dir.Y, normal.Y = dir.X.
-					const float nx = -dy / dl;
-					const float ny =  dx / dl;
+					// Use the normal stored at AddPoint time. No
+					// recomputation here — that's what made already
+					// emitted segments visually drift when the head
+					// moved.
+					const float nx = L.samples[i].normal.x;
+					const float ny = L.samples[i].normal.y;
 
 					if (k > 0) accum_length += L.samples[i].seg_length;
+					if (nx == 0.0f && ny == 0.0f) continue;  // degenerate sample, skip
 
 					const float t = L.samples[i].age / L.lifetime;
 					const float taper_factor = L.taper ? std::max(0.0f, 1.0f - t) : 1.0f;
