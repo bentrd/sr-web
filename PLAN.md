@@ -309,7 +309,7 @@ When picking up a task: tick the box in a commit *before* starting (claim it), o
 - [x] **Saved trails state**: new `apps/web/src/state/savedTrails.ts` (`SavedTrail` type + `loadSavedTrails` + `addSavedTrail` capped at 8 FIFO via `sr-web.saved-trails`); thread `savedTrails` + `addSavedTrail` through `AppState`
 - [x] **TrailMenu component**: new `apps/web/src/lobby/TrailMenu.tsx` — pill defaulting to `✦ Trail` (or current trail icon + name); hover swaps to `↑ Upload`; click opens dropdown with Presets section + Your trails section + Upload + Clear; outside-click and Esc close it
 - [x] **Home.tsx refactor**: replace inline trail block with `<TrailMenu />`; lift `handleTrailFiles` into the component
-- [ ] **Exit gate**: `bunx tsc --noEmit` + `bun run build` both green; manual lobby visual confirmation deferred to next browser run
+- [x] **Exit gate**: `bun run typecheck` + `bun run build` both green (protocol + server + web); manual lobby visual confirmation deferred to next browser run
 
 ---
 
