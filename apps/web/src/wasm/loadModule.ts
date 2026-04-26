@@ -73,10 +73,21 @@ function loadScript(): Promise<CreateSrModule> {
 	return scriptPromise;
 }
 
+// One Emscripten instance per canvas, ever. createSrModule starts a _main
+// loop on construction — calling it twice (e.g. React StrictMode's
+// mount→unmount→mount in dev) leaves two parallel sims running on the same
+// window keydown listeners with two independent input_map globals. The
+// orphaned instance keeps using defaults; the live instance gets the
+// rebound input_map. Symptom: visible canvas drives off the orphan,
+// abiRef.current / getLocalSnapshot read the live one.
+const moduleByCanvas = new WeakMap<HTMLCanvasElement, Promise<SrModule>>();
+
 export async function loadSrModule(canvas: HTMLCanvasElement): Promise<SrModule> {
-	const factory = await loadScript();
-	return factory({
-		canvas,
-		locateFile: (path) => `${BASE}${path}`,
-	});
+	const cached = moduleByCanvas.get(canvas);
+	if (cached) return cached;
+	const promise = loadScript().then((factory) =>
+		factory({ canvas, locateFile: (path) => `${BASE}${path}` }),
+	);
+	moduleByCanvas.set(canvas, promise);
+	return promise;
 }
