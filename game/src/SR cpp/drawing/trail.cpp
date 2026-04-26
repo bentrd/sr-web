@@ -96,13 +96,13 @@ namespace
 	// starts a new strip rather than connecting through the dead zone.
 	constexpr float k_strip_break_seconds = 0.05f;
 
-	// Two binary speed gates. ALWAYS layers turn on at hypot(vx,vy) >= 750
+	// Two binary speed gates. ALWAYS layers turn on at hypot(vx,vy) >= 800
 	// (so a high-arc jump or a wallride still trails); ONLY_AT_SUPERSPEED
 	// layers gate strictly on |vx| >= 1200 because that's the
 	// "horizontal-runway-supersonic" effect, not "going fast in any
 	// direction". Boost bypasses both: pressing the button kicks the trail
 	// in immediately, regardless of the player's current speed.
-	constexpr float k_trail_on_threshold       = 750.0f;
+	constexpr float k_trail_on_threshold       = 800.0f;
 	constexpr float k_superspeed_on_threshold  = 1200.0f;
 
 	struct sample
