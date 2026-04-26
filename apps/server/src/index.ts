@@ -379,6 +379,16 @@ const server = Bun.serve<WsData, never>({
 						});
 					}
 					if (!room.players.has(msg.target)) return;
+					// Permission: non-hosts can only teleport themselves.
+					const isHost = ws.data.playerId === room.hostId;
+					const isSelf = ws.data.playerId === msg.target;
+					if (!isHost && !isSelf) {
+						return send(ws, {
+							type: "error",
+							code: "not_host",
+							message: "only the host can teleport other players",
+						});
+					}
 					// Broadcast to everyone — only the target client acts on it,
 					// others get the announcement so chat can show "X tp'd Y".
 					store.broadcast(room, {
