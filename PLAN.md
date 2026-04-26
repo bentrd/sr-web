@@ -303,12 +303,12 @@ When picking up a task: tick the box in a commit *before* starting (claim it), o
 *Replaces the trail pill's "click = file picker" affordance with a real dropdown menu: presets (Goldilocks + Orange Superspeed), the user's recently-uploaded trails (cap 8 FIFO in localStorage), an Upload action that still opens the folder picker, and a Clear action. Hover swaps the pill label to "Upload" with an upload glyph.*
 
 - [x] **Asset bundling**: extend `scripts/collect-trails.ts` to support both workshop and userdata sources; copy the per-trail `icon` blob; bundle `goldilocks` (workshop ID 3230477673) + `orange-superspeed` (userdata `Orange Superspeed Trail`)
-- [ ] **Manifest schema**: add `icon` field to manifest entries (`apps/web/public/trails/manifest.json` + `TrailManifestEntry` in `loadTrail.ts`)
+- [x] **Manifest schema**: add `icon` field to manifest entries (`apps/web/public/trails/manifest.json` + `TrailManifestEntry` in `loadTrail.ts`)
 - [x] **Parser extension**: add `icon: Uint8Array | null` to `SrtPayload` in `parseSrt.ts`; extract entries named exactly `icon` (no extension) alongside the PNGs
 - [x] **Identity icon**: extend `Identity.trail` with optional `iconDataUrl` so the pill can show the icon inline; persist with the rest of the trail blob
 - [x] **Saved trails state**: new `apps/web/src/state/savedTrails.ts` (`SavedTrail` type + `loadSavedTrails` + `addSavedTrail` capped at 8 FIFO via `sr-web.saved-trails`); thread `savedTrails` + `addSavedTrail` through `AppState`
-- [ ] **TrailMenu component**: new `apps/web/src/lobby/TrailMenu.tsx` — pill defaulting to `✦ Trail` (or current trail icon + name); hover swaps to `↑ Upload`; click opens dropdown with Presets section + Your trails section + Upload + Clear; outside-click and Esc close it
-- [ ] **Home.tsx refactor**: replace inline trail block with `<TrailMenu />`; lift `handleTrailFiles` into the component
+- [x] **TrailMenu component**: new `apps/web/src/lobby/TrailMenu.tsx` — pill defaulting to `✦ Trail` (or current trail icon + name); hover swaps to `↑ Upload`; click opens dropdown with Presets section + Your trails section + Upload + Clear; outside-click and Esc close it
+- [x] **Home.tsx refactor**: replace inline trail block with `<TrailMenu />`; lift `handleTrailFiles` into the component
 - [ ] **Exit gate**: `bunx tsc --noEmit` + `bun run build` both green; manual lobby visual confirmation deferred to next browser run
 
 ---

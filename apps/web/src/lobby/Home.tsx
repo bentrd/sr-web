@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../state/AppState";
 import { hexToRgb, rgbToCss, rgbToHex } from "./color";
 import { MAPS } from "./maps";
 import { ControlsModal } from "./ControlsModal";
-import { parseSrt, buildSrt, bytesToBase64 } from "../game/trail/parseSrt";
+import { TrailMenu } from "./TrailMenu";
 
 export function Home(): JSX.Element {
 	const {
@@ -28,69 +28,6 @@ export function Home(): JSX.Element {
 	const [maxPlayers, setMaxPlayers] = useState<number>(-1);
 	const [isPublic, setIsPublic] = useState<boolean>(false);
 	const [filter, setFilter] = useState<string>("");
-	const trailFileRef = useRef<HTMLInputElement | null>(null);
-	const [trailError, setTrailError] = useState<string | null>(null);
-
-	// Hard cap mirrors the server validator (~285 KB raw → 384 KB base64).
-	const TRAIL_MAX_BYTES = 285 * 1024;
-
-	async function handleTrailFiles(fileList: FileList): Promise<void> {
-		setTrailError(null);
-		try {
-			const files = Array.from(fileList);
-			// SR's `.srt` files in `CEngineStorage/.../Local/` are empty
-			// 22-byte zip stubs; the real data lives unzipped under
-			// `Steam/userdata/<id>/207140/remote/trails/<name>/`. So the
-			// folder picker has to support both shapes:
-			//   1. folder that directly contains settings.trail + PNGs (+ icon)
-			//   2. folder that contains a real .srt zip (e.g. one shared/exported)
-			const realSrt = files.find((f) => {
-				const n = f.name.toLowerCase();
-				return n.endsWith(".srt") && f.size > 22; // skip empty-zip stubs
-			});
-			const settings = files.find((f) => f.name.toLowerCase() === "settings.trail");
-
-			let bytes: Uint8Array;
-			let displayName: string;
-
-			if (realSrt) {
-				if (realSrt.size > TRAIL_MAX_BYTES) {
-					throw new Error("file is over 285 KB");
-				}
-				bytes = new Uint8Array(await realSrt.arrayBuffer());
-				displayName = realSrt.name.replace(/\.srt$/i, "");
-			} else if (settings) {
-				const wanted = files.filter((f) => {
-					const n = f.name.toLowerCase();
-					return n === "settings.trail" || n === "icon" || n.endsWith(".png");
-				});
-				const built = await Promise.all(wanted.map(async (f) => ({
-					name: f.name,
-					bytes: new Uint8Array(await f.arrayBuffer()),
-				})));
-				bytes = buildSrt(built);
-				if (bytes.byteLength > TRAIL_MAX_BYTES) {
-					throw new Error("zipped folder is over 285 KB");
-				}
-				// `webkitRelativePath` is "<folder>/<file>" — pull the folder name.
-				const rel = (settings as File & { webkitRelativePath?: string }).webkitRelativePath ?? "";
-				displayName = rel.split("/")[0] || "trail";
-			} else {
-				throw new Error("no settings.trail or .srt found in folder");
-			}
-
-			parseSrt(bytes); // final validation
-			const b64 = bytesToBase64(bytes);
-			setIdentity({ ...identity, trail: { name: displayName, b64 } });
-		} catch (e) {
-			setTrailError(e instanceof Error ? e.message : "could not read trail");
-		}
-	}
-
-	function handleClearTrail(): void {
-		setTrailError(null);
-		setIdentity({ ...identity, trail: null });
-	}
 
 	const effectiveDisplayName =
 		displayName.trim().length > 0
@@ -231,47 +168,7 @@ export function Home(): JSX.Element {
 							noName ? "placeholder:text-amber-300/70" : ""
 						}`}
 					/>
-					<input
-						ref={trailFileRef}
-						type="file"
-						className="hidden"
-						// Folder picker: the .srt files in
-						// CEngineStorage/.../Local/ are empty stubs; the real
-						// content lives unzipped under
-						// Steam/userdata/.../remote/trails/<name>/.
-						{...({ webkitdirectory: "", directory: "" } as React.InputHTMLAttributes<HTMLInputElement>)}
-						onChange={(e) => {
-							const fs = e.target.files;
-							if (fs && fs.length > 0) void handleTrailFiles(fs);
-							// Reset so picking the same folder again still fires onChange.
-							e.target.value = "";
-						}}
-					/>
-					<button
-						type="button"
-						onClick={() => trailFileRef.current?.click()}
-						title={
-							trailError
-								? `Trail import failed: ${trailError}`
-								: identity.trail
-									? `Click to change. Right-click to clear.`
-									: "Pick a trail folder (Steam/userdata/.../remote/trails/<name>/)"
-						}
-						onContextMenu={(e) => {
-							e.preventDefault();
-							handleClearTrail();
-						}}
-						className={`flex h-9 max-w-[10rem] items-center gap-1.5 truncate rounded-lg border-0 bg-transparent px-3 text-xs font-medium hover:bg-zinc-800 ${
-							trailError
-								? "text-red-300 hover:text-red-200"
-								: identity.trail
-									? "text-emerald-300 hover:text-emerald-200"
-									: "text-zinc-400 hover:text-zinc-200"
-						}`}
-					>
-						<span className="text-base leading-none" aria-hidden>{identity.trail ? "✓" : "✦"}</span>
-						<span className="truncate">{identity.trail?.name ?? "Trail"}</span>
-					</button>
+					<TrailMenu />
 					<button
 						type="button"
 						onClick={() => setControlsOpen(true)}

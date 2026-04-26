@@ -15,6 +15,10 @@ export interface TrailManifestEntry {
 	id: string;
 	displayName: string;
 	settings: string;
+	// Per-trail thumbnail filename (relative to /trails/<id>/). Empty
+	// string when collect-trails couldn't find one — UIs should
+	// fall back to a placeholder.
+	icon: string;
 	images: string[];
 }
 
