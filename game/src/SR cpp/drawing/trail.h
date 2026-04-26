@@ -53,7 +53,13 @@ namespace trail
 	// Issues one glDrawArrays per visible strip per layer. Uses its own
 	// shader + VBO — does NOT batch through draw::flush_frame. Caller is
 	// responsible for ordering this between flushes if z-order matters.
-	void draw_all(const draw::camera& cam);
+	//
+	// `current_abs_vx` is the local player's |vel.x| this frame, used to
+	// fade ONLY_AT_SUPERSPEED layers. Below the trigger they vanish even
+	// if old samples are still inside their lifetime — so the visible
+	// trail tracks the *current* player speed, not its 2-seconds-ago
+	// speed when those samples were recorded.
+	void draw_all(const draw::camera& cam, float current_abs_vx);
 }
 
 #endif

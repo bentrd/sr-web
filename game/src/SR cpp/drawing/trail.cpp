@@ -97,10 +97,13 @@ namespace
 	constexpr float k_strip_break_seconds = 0.05f;
 
 	// Speed gate for ONLY AT SUPERSPEED layers. SR's "trail speed" sits
-	// at the green band of our speedometer (>= 750 px/s), and the gate is
-	// horizontal-only so wall-running doesn't sneak the trail on while
-	// the player is barely moving forward.
+	// at the green band of our speedometer (>= 750 px/s), and the gate
+	// is horizontal-only so wall-running doesn't sneak the trail on
+	// while the player is barely moving forward. The trail fades in
+	// linearly between the lower threshold and `k_full_opacity_speed`
+	// so the transition feels gradual rather than popping in.
 	constexpr float k_superspeed_threshold = 750.0f;
+	constexpr float k_full_opacity_speed   = 1200.0f;
 
 	struct sample
 	{
@@ -366,10 +369,18 @@ void trail::record_sample(emu::vector pos, emu::vector vel, float dt_seconds)
 	}
 }
 
-void trail::draw_all(const draw::camera& cam)
+void trail::draw_all(const draw::camera& cam, float current_abs_vx)
 {
 	if (!g.initialized || g.layers.empty()) return;
 	if (cam.viewport_size.x <= 0.0f || cam.viewport_size.y <= 0.0f) return;
+
+	// Map current speed to a [0..1] fade factor for ONLY_AT_SUPERSPEED
+	// layers. Below the gate the trail vanishes immediately, above the
+	// full-opacity speed it ignores existing samples' alpha multiplier.
+	const float speed_span = k_full_opacity_speed - k_superspeed_threshold;
+	const float speed_alpha = (speed_span > 0.0f)
+		? std::clamp((current_abs_vx - k_superspeed_threshold) / speed_span, 0.0f, 1.0f)
+		: (current_abs_vx >= k_superspeed_threshold ? 1.0f : 0.0f);
 
 	float proj[16];
 	make_ortho(proj, 0.0f, cam.viewport_size.x, cam.viewport_size.y, 0.0f);
@@ -385,6 +396,13 @@ void trail::draw_all(const draw::camera& cam)
 		if (L.samples.size() < 2) continue;
 		auto img_it = g.images.find(L.image_name);
 		if (img_it == g.images.end()) continue;
+
+		// Per-layer multiplier: superspeed layers fade with current speed,
+		// always-on layers stay at their authored opacity. Skip the whole
+		// layer when the speed gate has it fully closed.
+		const float layer_alpha_mul = (L.enabled_mode == 0) ? 1.0f : speed_alpha;
+		if (layer_alpha_mul <= 0.0f) continue;
+
 		glBindTexture(GL_TEXTURE_2D, img_it->second.tex);
 
 		// Walk samples, splitting at strip_start markers. Each contiguous
@@ -426,7 +444,7 @@ void trail::draw_all(const draw::camera& cam)
 					const float taper_factor = L.taper ? std::max(0.0f, 1.0f - t) : 1.0f;
 					const float half_w = L.size * 0.5f * taper_factor;
 
-					float alpha = L.opacity;
+					float alpha = L.opacity * layer_alpha_mul;
 					if (L.fade_out)
 						alpha *= std::max(0.0f, 1.0f - t * L.fade_out_speed);
 

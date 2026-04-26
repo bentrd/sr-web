@@ -1,6 +1,7 @@
 #include <random>
 #include <iostream>
 #include <chrono>
+#include <cmath>
 
 #include "playground.h"
 #include "emulation/player.h"
@@ -91,7 +92,14 @@ void playground::draw(const inputs&)
 
 	// Trail goes between world and player so it appears behind the
 	// rectangle, matching SpeedRunners' "TrailBehindLocalPlayersLayer".
-	trail::draw_all(m_camera);
+	// |vel.x| drives the per-frame fade for ONLY_AT_SUPERSPEED layers —
+	// passing it here (rather than caching at sample time) means the
+	// trail vanishes the instant the player drops below the gate, even
+	// while old samples are still inside their lifetime.
+	const float live_abs_vx = (m_player != nullptr && m_player->m_actor != nullptr)
+		? std::abs(m_player->m_actor->d.velocity.x)
+		: 0.0f;
+	trail::draw_all(m_camera, live_abs_vx);
 
 	// Player pass + ghosts. Single flush at the end ties them all into
 	// one batch (still two glDrawArrays — triangles + lines).
