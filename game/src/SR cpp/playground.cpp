@@ -281,23 +281,15 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 		emu::update_rg_state(m_rg_state, *m_player, m_state.m_time);
 	}
 
-	// --- Replay floor-touch detector ---
-	// The recorder logs continuously across attempts in a single session,
-	// so a submitted run blob can contain multiple floor touches (each
-	// failed attempt before the PR run, plus the PR run itself). We want
-	// the viewer to only see one complete attempt — stop the replay on
-	// the first floor-touch-after-airborne event. Mirrors the recorder's
-	// has_been_airborne / was_on_ground_prev logic.
-	if (m_replay.is_active && m_player != nullptr && m_player->m_actor != nullptr)
-	{
-		const bool is_on_ground = m_player->d.is_on_ground;
-		if (!is_on_ground) m_replay.has_been_airborne = true;
-		if (m_replay.has_been_airborne && !m_replay.was_on_ground_prev && is_on_ground)
-		{
-			m_replay.is_active = false;
-		}
-		m_replay.was_on_ground_prev = is_on_ground;
-	}
+	// --- Replay end-of-run detector ---
+	// duration_ticks already governs the natural end (replay_state::step
+	// flips is_active off when tick >= duration_ticks, which IS the PR
+	// floor-touch in the recording's frame). We previously also stopped
+	// on the first floor-touch-after-airborne to skip trailing content,
+	// but that fired on the spawn-fall landing and clipped the replay
+	// almost immediately. Revisit if we want to skip the prior-attempt
+	// preamble in chained-attempt sessions — the right fix is to record
+	// the last-attempt start tick alongside duration_ticks.
 
 	// --- Challenge run recorder (continuous recording) ---
 	// Active in both grapple_challenge and rg_challenge: recording starts
