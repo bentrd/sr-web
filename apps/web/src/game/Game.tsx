@@ -821,11 +821,12 @@ export function Game(): JSX.Element {
 				const best = Math.round(abi.getRgBest());
 				setRgBest((prev) => (prev === best ? prev : best));
 				// Auto-submit when streak breaks AND session best beat all-time best.
+				// `prevRg > 0 && rg === 0` fires exactly once per streak break —
+				// no submittedRef guard needed so subsequent PB breaks also submit.
 				const prevRg = prevRgConsecutiveRef.current;
 				prevRgConsecutiveRef.current = rg;
-				if (!submittedRef.current && prevRg > 0 && rg === 0 && best > 0 && best > allTimeBestRef.current) {
+				if (prevRg > 0 && rg === 0 && best > 0 && best > allTimeBestRef.current) {
 					allTimeBestRef.current = best;
-					submittedRef.current = true;
 					ws.send({ type: "submit_rg_score", maxStreak: best });
 				}
 			}
