@@ -39,3 +39,6 @@ apps/web/public/trails/*/*.png
 
 # Server leaderboard (auto-created by apps/server on first submit)
 apps/server/leaderboard.db*
+
+# Local copy of prod leaderboard (pulled via fly ssh sftp for inspection)
+prod-leaderboard.db*

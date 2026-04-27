@@ -12,6 +12,7 @@ import {
 	rgAllTimeBestForPlayer,
 	rgAllTimeRankForPlayer,
 } from "./leaderboard";
+import { handleAdminRequest } from "./admin";
 
 const PORT = Number(process.env.PORT ?? 4000);
 
@@ -108,8 +109,11 @@ function todayDate(): string {
 const server = Bun.serve<WsData, never>({
 	port: PORT,
 
-	fetch(req, server) {
+	async fetch(req, server) {
 		const url = new URL(req.url);
+
+		const adminRes = await handleAdminRequest(req, url, server);
+		if (adminRes) return adminRes;
 
 		if (url.pathname === "/ws") {
 			const ok = server.upgrade(req, {

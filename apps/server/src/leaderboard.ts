@@ -200,3 +200,108 @@ export function rgAllTimeRankForPlayer(
 	const row = stmt.get(playerName) as { rank: number } | undefined;
 	return row?.rank ?? 1;
 }
+
+// -- Admin CRUD (raw, unvalidated — for /admin only) -------------------
+
+export interface RawScore {
+	id: number;
+	date: string;
+	player_name: string;
+	max_speed: number;
+	timestamp: number;
+}
+
+export interface RawRgScore {
+	id: number;
+	date: string;
+	player_name: string;
+	max_streak: number;
+	timestamp: number;
+}
+
+export function adminListScores(): RawScore[] {
+	return db
+		.prepare(
+			"SELECT id, date, player_name, max_speed, timestamp FROM scores ORDER BY id DESC",
+		)
+		.all() as RawScore[];
+}
+
+export function adminListRgScores(): RawRgScore[] {
+	ensureRgTable();
+	return db
+		.prepare(
+			"SELECT id, date, player_name, max_streak, timestamp FROM rg_scores ORDER BY id DESC",
+		)
+		.all() as RawRgScore[];
+}
+
+const SCORE_FIELDS = ["date", "player_name", "max_speed", "timestamp"] as const;
+const RG_SCORE_FIELDS = ["date", "player_name", "max_streak", "timestamp"] as const;
+
+function buildUpdate(
+	table: "scores" | "rg_scores",
+	allowed: readonly string[],
+	id: number,
+	fields: Record<string, unknown>,
+): boolean {
+	const sets: string[] = [];
+	const vals: unknown[] = [];
+	for (const k of allowed) {
+		if (Object.prototype.hasOwnProperty.call(fields, k)) {
+			sets.push(`${k} = ?`);
+			vals.push(fields[k]);
+		}
+	}
+	if (sets.length === 0) return false;
+	vals.push(id);
+	const stmt = db.prepare(`UPDATE ${table} SET ${sets.join(", ")} WHERE id = ?`);
+	return stmt.run(...(vals as never[])).changes > 0;
+}
+
+export function adminUpdateScore(id: number, fields: Record<string, unknown>): boolean {
+	return buildUpdate("scores", SCORE_FIELDS, id, fields);
+}
+
+export function adminUpdateRgScore(id: number, fields: Record<string, unknown>): boolean {
+	ensureRgTable();
+	return buildUpdate("rg_scores", RG_SCORE_FIELDS, id, fields);
+}
+
+export function adminDeleteScore(id: number): boolean {
+	return db.prepare("DELETE FROM scores WHERE id = ?").run(id).changes > 0;
+}
+
+export function adminDeleteRgScore(id: number): boolean {
+	ensureRgTable();
+	return db.prepare("DELETE FROM rg_scores WHERE id = ?").run(id).changes > 0;
+}
+
+export function adminInsertScore(
+	date: string,
+	playerName: string,
+	maxSpeed: number,
+	timestamp: number,
+): number {
+	const r = db
+		.prepare(
+			"INSERT INTO scores (date, player_name, max_speed, timestamp) VALUES (?, ?, ?, ?)",
+		)
+		.run(date, playerName, maxSpeed, timestamp);
+	return Number(r.lastInsertRowid);
+}
+
+export function adminInsertRgScore(
+	date: string,
+	playerName: string,
+	maxStreak: number,
+	timestamp: number,
+): number {
+	ensureRgTable();
+	const r = db
+		.prepare(
+			"INSERT INTO rg_scores (date, player_name, max_streak, timestamp) VALUES (?, ?, ?, ?)",
+		)
+		.run(date, playerName, maxStreak, timestamp);
+	return Number(r.lastInsertRowid);
+}
