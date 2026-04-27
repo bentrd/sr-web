@@ -274,7 +274,7 @@ export function Game(): JSX.Element {
 	const [error, setError] = useState<string | null>(null);
 	const [hovered, setHovered] = useState<HoveredLabel | null>(null);
 	const [localSpeed, setLocalSpeed] = useState<number | null>(null);
-	const [fps, setFps] = useState<number>(0);
+	
 	const cursorRef = useRef<{ x: number; y: number } | null>(null);
 	const [quickChatMenu, setQuickChatMenu] = useState<number | null>(null);
 
@@ -776,18 +776,7 @@ export function Game(): JSX.Element {
 	useEffect(() => {
 		if (status !== "ready" || !room) return;
 		let raf = 0;
-		let lastFpsUpdate = performance.now();
-		let framesSinceUpdate = 0;
-
 		const tick = (): void => {
-			framesSinceUpdate++;
-			const now = performance.now();
-			if (now - lastFpsUpdate >= 500) {
-				setFps(Math.round((framesSinceUpdate * 1000) / (now - lastFpsUpdate)));
-				framesSinceUpdate = 0;
-				lastFpsUpdate = now;
-			}
-
 			const abi = abiRef.current;
 			if (!abi) {
 				raf = requestAnimationFrame(tick);
@@ -1091,7 +1080,7 @@ export function Game(): JSX.Element {
 						</table>
 					</div>
 				)}
-				{status === "ready" && <div className="fps-readout">{fps} fps</div>}
+				
 			</div>
 
 			{status === "loading" && <div className="game-status">Loading game…</div>}
