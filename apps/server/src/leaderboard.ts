@@ -1,13 +1,19 @@
 import { Database } from "bun:sqlite";
 import { join } from "path";
 
-// Gracefully degraded if the app directory is read-only (e.g. test runs).
-// In production this resolves to apps/server/leaderboard.db.
+// On Fly.io, mount a persistent volume at /data/ and set
+// LEADERBOARD_DB_PATH=/data/leaderboard.db so scores survive deploys.
+// Locally the default keeps the file next to the server source.
 let dbPath: string;
-try {
-	dbPath = join(import.meta.dir, "..", "leaderboard.db");
-} catch {
-	dbPath = ":memory:";
+const envPath = process.env.LEADERBOARD_DB_PATH;
+if (envPath) {
+	dbPath = envPath;
+} else {
+	try {
+		dbPath = join(import.meta.dir, "..", "leaderboard.db");
+	} catch {
+		dbPath = ":memory:";
+	}
 }
 
 let db: Database;

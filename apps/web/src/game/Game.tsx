@@ -909,6 +909,7 @@ export function Game(): JSX.Element {
 				if (msg.dailyBest > allTimeBestRef.current) {
 					allTimeBestRef.current = msg.dailyBest;
 				}
+				submittedRef.current = false;
 			}
 		});
 	}, [ws]);
@@ -953,6 +954,7 @@ export function Game(): JSX.Element {
 				if (msg.dailyBest > allTimeBestRef.current) {
 					allTimeBestRef.current = msg.dailyBest;
 				}
+				submittedRef.current = false;
 			}
 		});
 		return off;

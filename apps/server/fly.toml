@@ -13,9 +13,6 @@ primary_region = "cdg"
 [build]
   dockerfile = "Dockerfile"
 
-[env]
-  PORT = "4000"
-
 [http_service]
   internal_port = 4000
   force_https = true
@@ -34,6 +31,16 @@ primary_region = "cdg"
     grace_period = "10s"
     method = "GET"
     path = "/health"
+
+# Persistent volume so the SQLite leaderboard survives deploys.
+# One-time setup: fly volumes create leaderboard_data --region cdg --size 1
+[mounts]
+  source = "leaderboard_data"
+  destination = "/data"
+
+[env]
+  PORT = "4000"
+  LEADERBOARD_DB_PATH = "/data/leaderboard.db"
 
 [[vm]]
   cpu_kind = "shared"
