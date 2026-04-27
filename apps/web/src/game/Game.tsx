@@ -880,10 +880,24 @@ export function Game(): JSX.Element {
 	}, [status, room, peerInfo, playerId, hovered, speedometerEnabled, localSpeed]);
 
 	// Poll gamepad state each rAF and push to WASM.
+	// The C++ side does NOT reset controller bits — JS is the sole
+	// source of truth. This avoids stutter from reset-timing races
+	// between the JS rAF and Emscripten's tick_frame.
 	useEffect(() => {
 		if (status !== "ready") return;
 		const abi = abiRef.current;
 		if (!abi) return;
+
+		// Push zeros for all actions so stale bits don't persist
+		// across page visibility changes or component teardown.
+		const clearAll = (): void => {
+			for (let i = 0; i < 8; i++) abi.pushControllerInput(i, 0);
+		};
+
+		const onHidden = (): void => {
+			if (document.visibilityState === "hidden") clearAll();
+		};
+		document.addEventListener("visibilitychange", onHidden);
 
 		let raf = 0;
 		const poll = (): void => {
@@ -892,7 +906,11 @@ export function Game(): JSX.Element {
 		};
 		raf = requestAnimationFrame(poll);
 
-		return () => cancelAnimationFrame(raf);
+		return () => {
+			cancelAnimationFrame(raf);
+			document.removeEventListener("visibilitychange", onHidden);
+			clearAll();
+		};
 	}, [status]);
 
 	// Block default browser actions for game keys (space scrolling, etc).

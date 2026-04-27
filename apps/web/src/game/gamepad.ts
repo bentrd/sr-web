@@ -25,12 +25,14 @@ const THRESHOLD = 0.5;
 function isPressed(gamepad: Gamepad, index: number): boolean {
 	if (index >= gamepad.buttons.length) return false;
 	const btn = gamepad.buttons[index];
+	if (!btn) return false;
 	return btn.pressed || btn.value > THRESHOLD;
 }
 
 function axisActive(gamepad: Gamepad, index: number, dir: "neg" | "pos"): boolean {
 	if (index >= gamepad.axes.length) return false;
 	const val = gamepad.axes[index];
+	if (val == null) return false;
 	if (Math.abs(val) < DEAD_ZONE) return false;
 	if (dir === "neg") return val < -THRESHOLD;
 	return val > THRESHOLD;
@@ -74,9 +76,9 @@ export function pollGamepads(push: PushControllerInputFn): void {
 		return;
 	}
 
-	const actions = ["left", "right", "jump", "grapple", "slide", "boost", "item", "swap"] as const;
-	for (let i = 0; i < actions.length; i++) {
-		const gb = bindings[actions[i]];
+	const actionKeys = ["left", "right", "jump", "grapple", "slide", "boost", "item", "swap"] as const;
+	for (let i = 0; i < actionKeys.length; i++) {
+		const gb = bindings[actionKeys[i] as keyof GamepadBindings];
 		let pressed = false;
 		if (gb) {
 			if (gb.type === "button") {
@@ -94,9 +96,25 @@ export function pollGamepads(push: PushControllerInputFn): void {
 let rebindPrevButtons: boolean[] = [];
 let rebindPrevAxes: number[] = [];
 
+// Copy current gamepad state into the prev-state arrays so held
+// buttons / axes don't re-trigger on the next poll.
+function snapshotPrevState(gp: Gamepad): void {
+	rebindPrevButtons = gp.buttons.map((_b, idx) => isPressed(gp, idx));
+	rebindPrevAxes = [...gp.axes];
+}
+
+// Reset rebind state to match the current controller state (if any).
+// Called when a new capture session starts so already-held buttons
+// are not treated as new presses.
 export function resetRebindState(): void {
-	rebindPrevButtons = [];
-	rebindPrevAxes = [];
+	const gamepads = navigator.getGamepads();
+	const gp = gamepads.find((g) => g !== null);
+	if (gp) {
+		snapshotPrevState(gp);
+	} else {
+		rebindPrevButtons = [];
+		rebindPrevAxes = [];
+	}
 }
 
 export function pollGamepadForRebind(): GamepadBinding | null {
@@ -104,15 +122,18 @@ export function pollGamepadForRebind(): GamepadBinding | null {
 	const gp = gamepads.find((g) => g !== null);
 	if (!gp) return null;
 
-	// Ensure arrays are large enough
-	while (rebindPrevButtons.length < gp.buttons.length) rebindPrevButtons.push(false);
-	while (rebindPrevAxes.length < gp.axes.length) rebindPrevAxes.push(0);
+	// Lazy init on first call: capture current state so we only
+	// detect NEW presses, not already-held buttons.
+	if (rebindPrevButtons.length === 0 && rebindPrevAxes.length === 0) {
+		snapshotPrevState(gp);
+	}
 
 	// Check each button for a new press (edge: was released, now pressed)
 	for (let i = 0; i < gp.buttons.length; i++) {
 		const now = isPressed(gp, i);
-		if (now && !rebindPrevButtons[i]) {
-			resetRebindState();
+		const prev = i < rebindPrevButtons.length ? rebindPrevButtons[i] : false;
+		if (now && !prev) {
+			snapshotPrevState(gp);
 			return {
 				type: "button",
 				index: i,
@@ -124,11 +145,12 @@ export function pollGamepadForRebind(): GamepadBinding | null {
 	// Check each axis for new movement (edge: was centered, now beyond threshold)
 	for (let i = 0; i < gp.axes.length; i++) {
 		const val = gp.axes[i];
-		const prev = rebindPrevAxes[i] ?? 0;
+		if (val == null) continue;
+		const prev = i < rebindPrevAxes.length ? (rebindPrevAxes[i] ?? 0) : 0;
 		const wasInactive = Math.abs(prev) < THRESHOLD;
 		if (wasInactive && Math.abs(val) >= THRESHOLD) {
 			const dir = val > 0 ? "pos" : "neg";
-			resetRebindState();
+			snapshotPrevState(gp);
 			return {
 				type: dir === "neg" ? "axis_neg" : "axis_pos",
 				index: i,
@@ -139,8 +161,7 @@ export function pollGamepadForRebind(): GamepadBinding | null {
 	}
 
 	// Update previous state for next call
-	rebindPrevButtons = gp.buttons.map((_b, idx) => isPressed(gp, idx));
-	rebindPrevAxes = [...gp.axes];
+	snapshotPrevState(gp);
 
 	return null;
 }

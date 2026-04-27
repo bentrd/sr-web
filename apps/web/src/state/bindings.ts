@@ -22,6 +22,12 @@ export const GAME_ACTIONS = [
 	"swap",
 ] as const;
 
+// UI actions are handled in JS only (never pushed to WASM).
+export const UI_ACTIONS = ["chat", "reset", "save_state", "load_state"] as const;
+
+export const ACTIONS = [...GAME_ACTIONS, ...UI_ACTIONS] as const;
+export type Action = typeof ACTIONS[number];
+
 // --- Gamepad bindings (separate from keyboard, both active simultaneously) ---
 
 export type GamepadBinding =
@@ -90,12 +96,6 @@ export function setGamepadBindings(gb: GamepadBindings): void {
 	cachedGamepadBindings = gb;
 	saveGamepadBindings(gb);
 }
-
-// UI actions are handled in JS only (never pushed to WASM).
-export const UI_ACTIONS = ["chat", "reset", "save_state", "load_state"] as const;
-
-export const ACTIONS = [...GAME_ACTIONS, ...UI_ACTIONS] as const;
-export type Action = typeof ACTIONS[number];
 
 export type Binding = { code: number; label: string };
 export type Bindings = Record<Action, Binding>;

@@ -18,6 +18,14 @@ interface ControlsModalProps {
 	onClose: () => void;
 }
 
+// Advance to the next action after a successful rebind. Returns null
+// when we're at the last action (stops the autotab chain).
+function nextAction(current: Action): Action | null {
+	const idx = ACTIONS.indexOf(current);
+	if (idx < 0 || idx >= ACTIONS.length - 1) return null;
+	return ACTIONS[idx + 1]!;
+}
+
 export function ControlsModal({ open, onClose }: ControlsModalProps): JSX.Element | null {
 	const { bindings, setBindings } = useApp();
 	const [capturing, setCapturing] = useState<Action | null>(null);
@@ -62,7 +70,7 @@ export function ControlsModal({ open, onClose }: ControlsModalProps): JSX.Elemen
 			if (conflict) next[conflict] = bindings[capturing];
 			next[capturing] = binding;
 			setBindings(next);
-			setCapturing(null);
+			setCapturing(nextAction(capturing));
 		};
 		window.addEventListener("keydown", handler, true);
 		return () => window.removeEventListener("keydown", handler, true);
@@ -90,10 +98,13 @@ export function ControlsModal({ open, onClose }: ControlsModalProps): JSX.Elemen
 					if (!existing) return false;
 					return existing.type === gb.type && existing.index === gb.index;
 				});
-				if (conflict) next[conflict] = next[capturingGp];
+				if (conflict) {
+					const swap = next[capturingGp];
+					if (swap) next[conflict] = swap;
+				}
 				next[capturingGp] = gb;
 				updateGpBindings(next);
-				setCapturingGp(null);
+				setCapturingGp(nextAction(capturingGp));
 			}
 		}, 16); // ~60Hz polling during capture
 		return () => {
