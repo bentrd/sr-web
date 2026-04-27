@@ -749,10 +749,15 @@ export function Game(): JSX.Element {
 	// ── Challenge leaderboard helpers ──────────────────────────────────
 
 	const submitScore = useCallback(() => {
-		if (!isChallenge || sessionMax <= 0 || submittedRef.current) return;
+		if (!isChallenge || submittedRef.current) return;
+		const abi = abiRef.current;
+		if (!abi) return;
+		const maxSp = Math.round(abi.getMaxSpeed());
+		if (maxSp <= 0) return;
 		submittedRef.current = true;
-		ws.send({ type: "submit_score", maxSpeed: sessionMax });
-	}, [isChallenge, sessionMax, ws]);
+		setSessionMax(maxSp);
+		ws.send({ type: "submit_score", maxSpeed: maxSp });
+	}, [isChallenge, ws]);
 
 	const fetchLeaderboard = useCallback(async () => {
 		setLeaderboardLoading(true);
@@ -782,11 +787,18 @@ export function Game(): JSX.Element {
 	// Auto-submit on unmount in challenge mode.
 	useEffect(() => {
 		return () => {
-			if (isChallenge && sessionMax > 0 && !submittedRef.current) {
-				ws.send({ type: "submit_score", maxSpeed: sessionMax });
+			if (isChallenge && !submittedRef.current) {
+				const abi = abiRef.current;
+				if (abi) {
+					const maxSp = Math.round(abi.getMaxSpeed());
+					if (maxSp > 0) {
+						submittedRef.current = true;
+						ws.send({ type: "submit_score", maxSpeed: maxSp });
+					}
+				}
 			}
 		};
-	}, [isChallenge, sessionMax, ws]);
+	}, [isChallenge, ws]);
 
 	const onCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
 		const canvas = canvasRef.current;

@@ -17,7 +17,7 @@ const CORS_HEADERS: Record<string, string> = {
 	"access-control-allow-headers": "content-type",
 };
 
-function corsResponse(body: BodyInit | null, init?: ResponseInit): Response {
+function corsResponse(body: string | null, init?: ResponseInit): Response {
 	return new Response(body, {
 		...init,
 		headers: { ...CORS_HEADERS, ...init?.headers },
