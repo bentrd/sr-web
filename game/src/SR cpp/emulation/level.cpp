@@ -104,6 +104,16 @@ void level::generate_corridor(level& lvl, int32_t width, int32_t height, int32_t
 			lvl.m_tile_layer.set_tile(x, floor_y, tile_square);
 	}
 
+	// Solid walls at the left and right ends so players can't fall off.
+	// Fill the entire air gap between ceiling and floor (inclusive).
+	const int32_t wall_top = std::max(0, ceil_y);
+	const int32_t wall_bot = std::min(height - 1, floor_y);
+	for (int32_t y = wall_top; y <= wall_bot; y++)
+	{
+		lvl.m_tile_layer.set_tile(0, y, tile_square);
+		lvl.m_tile_layer.set_tile(width - 1, y, tile_square);
+	}
+
 	// Player sits centered vertically in the air gap.
 	const float spawn_y = static_cast<float>((ceil_y + 1 + floor_y - 1) / 2) * 16.0f;
 	lvl.m_actors.clear();

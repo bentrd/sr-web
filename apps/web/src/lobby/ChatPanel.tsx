@@ -245,7 +245,7 @@ export function ChatPanel({ variant = "lobby" }: ChatPanelProps): JSX.Element {
 						{collapsed ? "▲" : "▼"}
 					</button>
 				</header>
-				<div style={{ display: collapsed ? "none" : undefined }}>
+				<div className="chat-body" style={{ display: collapsed ? "none" : undefined }}>
 					<div className="chat-list" ref={listRef}>
 						{chat.length === 0 && localMsgs.length === 0 ? (
 							<p className="chat-empty">No messages yet.</p>

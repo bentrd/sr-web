@@ -817,6 +817,7 @@ button.primary {
 }
 
 .chat-header {
+	flex: 0 0 auto;
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
@@ -828,6 +829,14 @@ button.primary {
 	letter-spacing: 0.06em;
 	font-size: 0.75rem;
 	font-weight: 600;
+}
+
+.chat-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 }
 
 .chat-collapsed .chat-header {
@@ -895,6 +904,7 @@ button.primary {
 }
 
 .chat-form {
+	flex: 0 0 auto;
 	border-top: 1px solid var(--border);
 	padding: 0.4rem 0.5rem;
 	background: var(--panel-2);
