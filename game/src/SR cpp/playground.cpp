@@ -29,6 +29,17 @@ void playground::load(const std::string& map_path)
 	init();
 }
 
+void playground::load_challenge()
+{
+	// 100,000 tiles × 50 tiles tall = 20 MB tilemap.
+	// Ceiling at row 2 (32 wu), floor at row 23 (368 wu) → 20-tile air gap.
+	// Player spawns at X=200 tiles (3200 wu), centered in the air gap.
+	emu::level::generate_corridor(m_level, 100000, 50, 2, 23, 200);
+	m_session_max_speed = 0.0f;
+	init();
+	m_state.no_speed_cap = true;
+}
+
 void playground::init()
 {
 	m_state = emu::state{ m_level };
@@ -39,6 +50,7 @@ void playground::init()
 
 void playground::reset()
 {
+	m_session_max_speed = 0.0f;
 	if (m_player != nullptr)
 	{
 		m_player->reset();
@@ -61,6 +73,10 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 	m_state.update(33333);
 	m_camera.viewport_size = viewport_size;
 	m_camera.update(33333, m_player->m_actor->d.position);
+
+	// Track the session's peak speed for the challenge-mode HUD.
+	const float speed = m_player->m_actor->d.velocity.length();
+	if (speed > m_session_max_speed) m_session_max_speed = speed;
 
 	// 33333 = .NET TimeSpan ticks (100ns each) — see AGENTS.md. The trail
 	// subsystem throttles internally to ~60 Hz, so feeding it the raw 300 Hz

@@ -36,3 +36,6 @@ apps/web/public/trails/*/*.png
 
 # Vite cache
 .vite
+
+# Server leaderboard (auto-created by apps/server on first submit)
+apps/server/leaderboard.db*

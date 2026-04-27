@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from "bun";
-import type { PlayerInfo, RGB, RoomState, ServerMsg } from "@sr-web/protocol";
+import type { GameMode, PlayerInfo, RGB, RoomState, ServerMsg } from "@sr-web/protocol";
 import { generateUniqueCode } from "./codes";
 
 export type WsData = {
@@ -23,11 +23,13 @@ export type CreateRoomOptions = {
 	displayName: string;
 	maxPlayers: number;
 	isPublic: boolean;
+	mode: GameMode;
 };
 
 type Room = {
 	code: string;
 	mapId: string;
+	mode: GameMode;
 	hostId: string;
 	players: Map<string, ServerPlayer>;
 	started: boolean;
@@ -60,6 +62,7 @@ export class RoomStore {
 		const room: Room = {
 			code,
 			mapId,
+			mode: opts.mode,
 			hostId: player.id,
 			players: new Map([[player.id, player]]),
 			started: false,
@@ -207,6 +210,7 @@ export class RoomStore {
 			type: "room_state",
 			code: room.code,
 			mapId: room.mapId,
+			mode: room.mode,
 			hostId: room.hostId,
 			players: [...room.players.values()].map(playerInfo),
 			started: room.started,
@@ -260,6 +264,7 @@ export class RoomStore {
 			code: string;
 			displayName: string;
 			mapId: string;
+			mode: GameMode;
 			playerCount: number;
 			maxPlayers: number;
 			started: boolean;
@@ -270,6 +275,7 @@ export class RoomStore {
 				code: room.code,
 				displayName: room.displayName,
 				mapId: room.mapId,
+				mode: room.mode,
 				playerCount: room.players.size,
 				maxPlayers: room.maxPlayers,
 				started: room.started,

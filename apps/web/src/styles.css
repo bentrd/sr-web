@@ -32,14 +32,14 @@ body {
 }
 
 .lobby {
-	width: min(80rem, 100%);
+	width: min(128rem, 100%);
 	display: flex;
 	flex-direction: column;
 	gap: 1.5rem;
 }
 
 .home {
-	width: min(80rem, 100%);
+	width: min(128rem, 100%);
 	display: flex;
 	flex-direction: column;
 	gap: 1.25rem;
@@ -379,6 +379,147 @@ button.primary {
 
 .game-status-error {
 	color: var(--danger);
+}
+
+/* ── Grapple Challenge HUD ──────────────────────────────────────────── */
+
+.challenge-hud {
+	position: absolute;
+	top: 0.4rem;
+	right: 0.5rem;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 0.35rem;
+	pointer-events: auto;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.challenge-speed-row,
+.challenge-max-row {
+	display: flex;
+	align-items: baseline;
+	gap: 0.4rem;
+	padding: 0.2rem 0.5rem;
+	border-radius: 0.3rem;
+	background: rgba(0, 0, 0, 0.55);
+}
+
+.challenge-current {
+	font-size: 1.35rem;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+
+.challenge-max-value {
+	font-size: 1.1rem;
+	font-weight: 700;
+	color: rgba(255, 255, 255, 0.9);
+	font-variant-numeric: tabular-nums;
+}
+
+.challenge-label {
+	font-size: 0.65rem;
+	color: rgba(255, 255, 255, 0.5);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.challenge-buttons {
+	display: flex;
+	gap: 0.35rem;
+}
+
+.challenge-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: 1.8rem;
+	padding: 0 0.6rem;
+	font-family: inherit;
+	font-size: 0.7rem;
+	font-weight: 600;
+	color: rgba(255, 255, 255, 0.85);
+	background: rgba(255, 255, 255, 0.1);
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	border-radius: 0.3rem;
+	cursor: pointer;
+	transition: background 0.15s;
+}
+
+.challenge-btn:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.challenge-btn:not(:disabled):hover {
+	background: rgba(255, 255, 255, 0.18);
+}
+
+.challenge-btn-alt {
+	color: var(--accent);
+	border-color: rgba(255, 183, 77, 0.3);
+	background: rgba(255, 183, 77, 0.12);
+}
+
+.challenge-btn-alt:not(:disabled):hover {
+	background: rgba(255, 183, 77, 0.22);
+}
+
+.challenge-score-ack {
+	padding: 0.2rem 0.5rem;
+	font-size: 0.65rem;
+	color: rgba(102, 187, 106, 0.9);
+	background: rgba(0, 0, 0, 0.45);
+	border-radius: 0.25rem;
+}
+
+/* ── Leaderboard modal ──────────────────────────────────────────────── */
+
+.challenge-leaderboard {
+	min-width: 24rem;
+	max-width: 32rem;
+}
+
+.leaderboard-table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.leaderboard-table th {
+	padding: 0.4rem 0.6rem;
+	font-size: 0.7rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: rgba(255, 255, 255, 0.4);
+	text-align: left;
+	border-bottom: 1px solid var(--border);
+}
+
+.leaderboard-table td {
+	padding: 0.45rem 0.6rem;
+	font-size: 0.85rem;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.lb-rank {
+	font-weight: 700;
+	color: var(--accent);
+	width: 2.5rem;
+}
+
+.lb-name {
+	color: var(--text);
+}
+
+.lb-speed {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-weight: 600;
+	color: var(--text);
+	text-align: right;
+	font-variant-numeric: tabular-nums;
 }
 
 .modal-backdrop {

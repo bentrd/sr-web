@@ -5,9 +5,11 @@
 // change, update both this file AND the C++ sr_get_local_snapshot /
 // sr_push_ghost signatures in the same commit.
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export type RGB = readonly [r: number, g: number, b: number];
+
+export type GameMode = "standard" | "grapple_challenge";
 
 // ──────────────────────────────────────────────────────────────────────
 // Phase 0 — connection liveness
@@ -24,7 +26,8 @@ export type CreateRoom = {
 	type: "create_room";
 	name: string;       // player name
 	color: RGB;
-	mapId: string;
+	mapId: string;      // map id for standard mode; empty for grapple_challenge
+	mode: GameMode;     // "standard" (load a .sr map) or "grapple_challenge" (procedural corridor)
 	// Room-level metadata. Every room has a display name + max-player cap
 	// regardless of visibility — `public` is just an observability toggle.
 	displayName: string;
@@ -59,6 +62,7 @@ export type RoomState = {
 	type: "room_state";
 	code: string;
 	mapId: string;
+	mode: GameMode;
 	hostId: string;
 	players: PlayerInfo[];
 	started: boolean;
@@ -103,6 +107,7 @@ export type PublicRoomSummary = {
 	code: string;
 	displayName: string;
 	mapId: string;
+	mode: GameMode;
 	playerCount: number;
 	maxPlayers: number;
 	started: boolean;
@@ -198,6 +203,33 @@ export type TpRelay = {
 };
 
 // ──────────────────────────────────────────────────────────────────────
+// Grapple Challenge leaderboard
+// ──────────────────────────────────────────────────────────────────────
+
+export type SubmitScore = {
+	type: "submit_score";
+	maxSpeed: number; // in wu/s, validated server-side (0 < x < 100000)
+};
+
+export type ScoreAck = {
+	type: "score_ack";
+	rank: number;     // position on today's leaderboard (1-based)
+	dailyBest: number; // this player's best speed today (after submission)
+};
+
+export type LeaderboardEntry = {
+	rank: number;
+	name: string;
+	maxSpeed: number;
+};
+
+export type Leaderboard = {
+	type: "leaderboard";
+	date: string; // "YYYY-MM-DD"
+	entries: LeaderboardEntry[];
+};
+
+// ──────────────────────────────────────────────────────────────────────
 // Unions
 // ──────────────────────────────────────────────────────────────────────
 
@@ -214,7 +246,8 @@ export type ClientMsg =
 	| TpRequest
 	| SetRoomVisibility
 	| SubscribePublicRooms
-	| UnsubscribePublicRooms;
+	| UnsubscribePublicRooms
+	| SubmitScore;
 
 // Sent once per connection right after WS open so the client knows its
 // server-assigned id (used to recognise itself in subsequent room_state
@@ -247,4 +280,6 @@ export type ServerMsg =
 	| TrailShareOut
 	| TpRelay
 	| PublicRoomsList
-	| ErrorMsg;
+	| ErrorMsg
+	| ScoreAck
+	| Leaderboard;

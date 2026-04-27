@@ -25,6 +25,11 @@ namespace emu
 
 		std::array<std::array<bool, input_count>, 4> m_inputs{};
 
+		// When true, the `physics::max_speed` clamp is bypassed so the
+		// player can reach arbitrarily high velocities. Used in the
+		// Grapple Challenge game mode.
+		bool no_speed_cap = false;
+
 		state();
 		state(level& level);
 		state(const state& right);

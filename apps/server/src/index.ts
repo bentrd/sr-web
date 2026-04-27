@@ -1,7 +1,13 @@
 import type { ServerWebSocket } from "bun";
-import type { ClientMsg, RGB, ServerMsg } from "@sr-web/protocol";
+import type { ClientMsg, GameMode, RGB, ServerMsg } from "@sr-web/protocol";
 import { RoomStore, playerInfo, type WsData } from "./rooms";
 import { normaliseCode } from "./codes";
+import {
+	submitScore,
+	getDailyLeaderboard,
+	dailyBestForPlayer,
+	rankForPlayer,
+} from "./leaderboard";
 
 const PORT = Number(process.env.PORT ?? 4000);
 
@@ -9,8 +15,13 @@ const PORT = Number(process.env.PORT ?? 4000);
 // run 30–200 KB (raw ZIP); we allow ~285 KB raw → ~384 KB base64 to
 // give headroom for animated trails with bigger sprite sheets.
 const TRAIL_B64_MAX = 384 * 1024;
+const SCORE_SUBMIT_COOLDOWN_MS = 10_000;
+const SCORE_MAX_SPEED_CAP = 100_000;
 
 const store = new RoomStore();
+
+// Rate-limit: playerId → last submit timestamp
+const scoreCooldowns = new Map<string, number>();
 
 function send(ws: ServerWebSocket<WsData>, msg: ServerMsg): void {
 	ws.send(JSON.stringify(msg));
@@ -53,6 +64,14 @@ function validColor(c: unknown): c is RGB {
 	);
 }
 
+function validMode(m: unknown): m is GameMode {
+	return m === "standard" || m === "grapple_challenge";
+}
+
+function todayDate(): string {
+	return new Date().toISOString().slice(0, 10);
+}
+
 const server = Bun.serve<WsData, never>({
 	port: PORT,
 
@@ -60,8 +79,6 @@ const server = Bun.serve<WsData, never>({
 		const url = new URL(req.url);
 
 		if (url.pathname === "/ws") {
-			// Provisional id — overwritten if client sends a `hello` with
-			// a previously-assigned id within the grace window.
 			const ok = server.upgrade(req, {
 				data: { playerId: nextPlayerId(), roomCode: null, helloSeen: false } satisfies WsData,
 			});
@@ -70,6 +87,22 @@ const server = Bun.serve<WsData, never>({
 		}
 
 		if (url.pathname === "/health") return new Response("ok");
+
+		if (url.pathname === "/leaderboard" && req.method === "GET") {
+			const date = url.searchParams.get("date") ?? todayDate();
+			const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 20)));
+			try {
+				const entries = getDailyLeaderboard(date, limit);
+				return new Response(JSON.stringify(entries), {
+					headers: { "content-type": "application/json", "cache-control": "public, max-age=30" },
+				});
+			} catch {
+				return new Response(JSON.stringify([]), {
+					status: 500,
+					headers: { "content-type": "application/json" },
+				});
+			}
+		}
 
 		return new Response("sr-web server", { status: 200 });
 	},
@@ -116,6 +149,8 @@ const server = Bun.serve<WsData, never>({
 						!validName(msg.name) ||
 						!validColor(msg.color) ||
 						typeof msg.mapId !== "string" ||
+						!validMode(msg.mode) ||
+						(!msg.mapId.length && msg.mode === "standard") ||
 						typeof msg.displayName !== "string" ||
 						msg.displayName.trim().length === 0 ||
 						msg.displayName.trim().length > 48 ||
@@ -128,7 +163,7 @@ const server = Bun.serve<WsData, never>({
 						return send(ws, {
 							type: "error",
 							code: "validation",
-							message: "name, color, mapId, displayName, maxPlayers, and public required",
+							message: "name, color, mapId, mode, displayName, maxPlayers, and public required",
 						});
 					}
 					const player = {
@@ -141,6 +176,7 @@ const server = Bun.serve<WsData, never>({
 						displayName: msg.displayName.trim(),
 						maxPlayers: msg.maxPlayers,
 						isPublic: msg.public,
+						mode: msg.mode,
 					});
 					ws.data.roomCode = room.code;
 					return send(ws, store.roomStateMsg(room));
@@ -399,6 +435,43 @@ const server = Bun.serve<WsData, never>({
 						by: ws.data.playerId,
 					});
 					return;
+				}
+
+				case "submit_score": {
+					if (!ws.data.roomCode) return;
+					const room = store.getRoom(ws.data.roomCode);
+					if (!room || room.mode !== "grapple_challenge") return;
+					if (typeof msg.maxSpeed !== "number" || !Number.isFinite(msg.maxSpeed) || msg.maxSpeed <= 0 || msg.maxSpeed > SCORE_MAX_SPEED_CAP) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "maxSpeed must be a positive number",
+						});
+					}
+					const me = room.players.get(ws.data.playerId);
+					if (!me) return;
+
+					// Rate-limit
+					const lastSubmit = scoreCooldowns.get(ws.data.playerId) ?? 0;
+					const now = Date.now();
+					if (now - lastSubmit < SCORE_SUBMIT_COOLDOWN_MS) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: `submit too fast — wait ${SCORE_SUBMIT_COOLDOWN_MS}ms`,
+						});
+					}
+					scoreCooldowns.set(ws.data.playerId, now);
+
+					const date = todayDate();
+					submitScore(date, me.name, Math.round(msg.maxSpeed));
+					const rank = rankForPlayer(date, me.name);
+					const dailyBest = dailyBestForPlayer(date, me.name);
+					return send(ws, {
+						type: "score_ack",
+						rank,
+						dailyBest,
+					});
 				}
 
 				default:

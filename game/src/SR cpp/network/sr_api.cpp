@@ -94,6 +94,44 @@ extern "C"
 		g_inst->m_playground.m_ghosts.clear();
 	}
 
+	// Load the procedural "Grapple Challenge" corridor instead of a
+	// .sr map file. 100K-tile-wide corridor, 20-tile air gap with
+	// grapple-able ceiling, no speed cap.
+	void sr_load_challenge()
+	{
+		if (g_inst == nullptr) return;
+		g_inst->m_playground.load_challenge();
+		g_inst->m_playground.m_ghosts.clear();
+	}
+
+	// Returns the peak velocity magnitude recorded this session
+	// (world units per second). Reset by sr_reset_challenge or
+	// a fresh sr_load_challenge call.
+	float sr_get_max_speed()
+	{
+		if (g_inst == nullptr) return 0.0f;
+		return g_inst->m_playground.m_session_max_speed;
+	}
+
+	// Reset the player to the corridor's PlayerStart and clear the
+	// session max-speed counter.
+	void sr_reset_challenge()
+	{
+		if (g_inst == nullptr) return;
+		auto& pg = g_inst->m_playground;
+		emu::player* p = pg.m_player;
+		if (p == nullptr || p->m_actor == nullptr) return;
+		if (p->d.is_grappling && p->m_grapple != nullptr)
+			p->cancel_grapple();
+		pg.reset();
+		p->d.boost = 0.0f;
+		p->d.boost_cooldown = 0.0f;
+		p->d.super_boost_force = emu::vec_zero;
+		p->d.super_boost_direction = emu::vec_zero;
+		p->update_hitboxes();
+		pg.m_camera.position = p->m_actor->d.position - pg.m_camera.viewport_size / 2.0f;
+	}
+
 	// Upsert a remote player snapshot. Identity (name + color) must be
 	// set separately via sr_set_ghost_identity — keeping them split lets
 	// JS push 30Hz state without re-sending the static fields.

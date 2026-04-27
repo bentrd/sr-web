@@ -39,10 +39,15 @@ struct playground
 	net::local_identity m_local_identity;
 	net::ghost_manager m_ghosts;
 
+	// Peak velocity magnitude (wu/s) recorded this session. Reset by
+	// reset() and never clamped — the display side rounds to int.
+	float m_session_max_speed = 0.0f;
+
 	playground();
 
 	void init();
 	void load(const std::string& map_path);
+	void load_challenge();
 	void reset();
 
 	void update_input(const inputs& inputs);

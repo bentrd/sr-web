@@ -91,3 +91,24 @@ const level_actor& level::get_actor(std::string_view type, int32_t index) const
 
 	throw std::invalid_argument{ "Actor not found!" };
 }
+
+void level::generate_corridor(level& lvl, int32_t width, int32_t height, int32_t ceil_y, int32_t floor_y, int32_t start_x)
+{
+	lvl = level{ width, height };
+
+	for (int32_t x = 0; x < width; x++)
+	{
+		if (ceil_y >= 0 && ceil_y < height)
+			lvl.m_tile_layer.set_tile(x, ceil_y, tile_grapple_ceil);
+		if (floor_y >= 0 && floor_y < height)
+			lvl.m_tile_layer.set_tile(x, floor_y, tile_square);
+	}
+
+	// Player sits centered vertically in the air gap.
+	const float spawn_y = static_cast<float>((ceil_y + 1 + floor_y - 1) / 2) * 16.0f;
+	lvl.m_actors.clear();
+	lvl.m_actors.emplace_back(
+		emu::vector{ static_cast<float>(start_x) * 16.0f, spawn_y },
+		emu::vector{ 25.0f, 45.0f },
+		std::string("PlayerStart"));
+}

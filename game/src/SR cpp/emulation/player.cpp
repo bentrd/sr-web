@@ -541,7 +541,7 @@ void player::update_basic(timespan time, timespan delta)
 				else if (d.collision_tangent.x < 0.0f)
 					d.move_direction = -1;
 			}
-			if (velocity.length() > physics::max_speed)
+			if (!m_actor->m_state->no_speed_cap && velocity.length() > physics::max_speed)
 			{
 				velocity = physics::max_speed * velocity.normalized();
 			}

@@ -5,6 +5,7 @@ import { hexToRgb, rgbToCss, rgbToHex } from "./color";
 import { MAPS } from "./maps";
 import { ControlsModal } from "./ControlsModal";
 import { TrailMenu } from "./TrailMenu";
+import type { GameMode } from "@sr-web/protocol";
 
 export function Home(): JSX.Element {
 	const {
@@ -21,6 +22,7 @@ export function Home(): JSX.Element {
 	} = useApp();
 	const navigate = useNavigate();
 
+	const [mode, setMode] = useState<GameMode>("standard");
 	const [mapId, setMapId] = useState<string>(MAPS[0]?.id ?? "");
 	const [joinCode, setJoinCode] = useState<string>("");
 	const [controlsOpen, setControlsOpen] = useState(false);
@@ -60,13 +62,16 @@ export function Home(): JSX.Element {
 
 	function handleCreate(e: FormEvent): void {
 		e.preventDefault();
-		if (!canSubmit || !mapId) return;
+		if (!canSubmit) return;
+		if (mode === "standard" && !mapId) return;
 		clearError();
+		const actualMapId = mode === "grapple_challenge" ? "grapple_challenge" : mapId;
 		ws.send({
 			type: "create_room",
 			name: identity.name.trim(),
 			color: identity.color,
-			mapId,
+			mapId: actualMapId,
+			mode,
 			displayName: effectiveDisplayName.slice(0, 48),
 			maxPlayers,
 			public: isPublic,
@@ -117,7 +122,7 @@ export function Home(): JSX.Element {
 				: "bg-red-400/80";
 
 	return (
-		<main className="mx-auto flex w-full max-w-[96rem] flex-col gap-6 px-4 py-4">
+		<main className="mx-auto flex w-full max-w-[128rem] flex-col gap-6 px-6 py-5">
 			<header className="flex flex-wrap items-center justify-between gap-4">
 				<div className="flex h-12 items-center gap-3">
 					<div className="size-12 rounded-xl bg-gradient-to-br from-amber-600/80 to-rose-700/80" />
@@ -210,7 +215,7 @@ export function Home(): JSX.Element {
 							value={filter}
 							onChange={(e) => setFilter(e.target.value)}
 							placeholder="Filter by name, code, or map…"
-							className="h-10 w-full max-w-xs rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-600"
+							className="h-10 w-full max-w-sm rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-600"
 						/>
 					</div>
 
@@ -227,6 +232,7 @@ export function Home(): JSX.Element {
 						<ul className="flex list-none flex-col gap-2 p-0">
 							{filteredPublic.map((r) => {
 								const map = MAPS.find((m) => m.id === r.mapId);
+								const isChallenge = r.mode === "grapple_challenge";
 								const unlimited = r.maxPlayers === -1;
 								const full = !unlimited && r.playerCount >= r.maxPlayers;
 								const fillPct = unlimited
@@ -248,9 +254,15 @@ export function Home(): JSX.Element {
 												{r.displayName}
 											</div>
 											<div className="mt-1 flex flex-wrap items-center gap-1.5">
-												<span className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-400">
-													{map?.displayName ?? r.mapId}
-												</span>
+												{isChallenge ? (
+													<span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-300">
+														Grapple Challenge
+													</span>
+												) : (
+													<span className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-400">
+														{map?.displayName ?? r.mapId}
+													</span>
+												)}
 												<span className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 font-mono text-[11px] text-zinc-400">
 													{r.code}
 												</span>
@@ -298,6 +310,42 @@ export function Home(): JSX.Element {
 						<h2 className="mb-4 text-base font-medium text-zinc-200">Host a lobby</h2>
 
 						<div className="flex flex-col gap-3">
+							<div className="flex flex-col gap-1.5">
+								<span className="text-xs font-medium text-zinc-400">Game mode</span>
+								<div
+									role="radiogroup"
+									aria-label="Game mode"
+									className="flex h-10 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950"
+								>
+									<button
+										type="button"
+										role="radio"
+										aria-checked={mode === "standard"}
+										onClick={() => setMode("standard")}
+										className={`flex flex-1 items-center justify-center rounded-none border-0 px-3 text-xs font-medium transition ${
+											mode === "standard"
+												? "bg-zinc-800 text-zinc-100"
+												: "bg-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+										}`}
+									>
+										Standard
+									</button>
+									<button
+										type="button"
+										role="radio"
+										aria-checked={mode === "grapple_challenge"}
+										onClick={() => setMode("grapple_challenge")}
+										className={`flex flex-1 items-center justify-center rounded-none border-0 border-l border-l-zinc-800 px-3 text-xs font-medium transition ${
+											mode === "grapple_challenge"
+												? "bg-emerald-500/20 text-emerald-300"
+												: "bg-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+										}`}
+									>
+										Grapple Challenge
+									</button>
+								</div>
+							</div>
+
 							<label className="flex flex-col gap-1.5">
 								<span className="text-xs font-medium text-zinc-400">Lobby name</span>
 								<input
@@ -313,15 +361,20 @@ export function Home(): JSX.Element {
 							<label className="flex flex-col gap-1.5">
 								<span className="text-xs font-medium text-zinc-400">Map</span>
 								<select
-									value={mapId}
+									value={mode === "grapple_challenge" ? "grapple_challenge" : mapId}
+									disabled={mode === "grapple_challenge"}
 									onChange={(e) => setMapId(e.target.value)}
-									className="h-10 rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none focus:border-zinc-600"
+									className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none focus:border-zinc-600 disabled:cursor-default disabled:text-emerald-300 disabled:opacity-100"
 								>
-									{MAPS.map((m) => (
-										<option key={m.id} value={m.id}>
-											{m.displayName}
-										</option>
-									))}
+									{mode === "grapple_challenge" ? (
+										<option value="grapple_challenge">Grapple Challenge</option>
+									) : (
+										MAPS.map((m) => (
+											<option key={m.id} value={m.id}>
+												{m.displayName}
+											</option>
+										))
+									)}
 								</select>
 							</label>
 

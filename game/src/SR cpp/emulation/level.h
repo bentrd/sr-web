@@ -29,6 +29,8 @@ namespace emu
 		bool is_colliding(const aabb& bounds, float ext = 1.0f) const;
 		bool is_colliding_hori(vector start, float length, float ext = 1.0f) const;
 		bool is_colliding_vert(vector start, float length, float ext = 1.0f) const;
+
+		static void generate_corridor(level& out, int32_t width, int32_t height, int32_t ceil_y, int32_t floor_y, int32_t start_x);
 	};
 }
 

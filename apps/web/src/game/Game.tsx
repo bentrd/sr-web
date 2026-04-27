@@ -28,15 +28,20 @@ import { base64ToBytes as srtBase64ToBytes } from "./trail/parseSrt";
 // monitor refresh — the three are deliberately decoupled (see AGENTS.md).
 const SEND_INTERVAL_MS = 16;
 
-// Render ghosts INTERP_DELAY_MS in the past so we always have one
-// snapshot ahead to lerp toward. Smaller = lower perceived latency, but
-// any network jitter > delay causes a stutter. With 60Hz sends, ~60ms
-// gives us 3-4 samples of cushion.
-const INTERP_DELAY_MS = 60;
-// Cap how many samples we retain per peer. We only ever need the two
-// bracketing the render time; an extra slot or two protects against
-// out-of-order arrivals.
-const GHOST_BUFFER_MAX = 6;
+	// Render ghosts INTERP_DELAY_MS in the past so we always have one
+	// snapshot ahead to lerp toward. Smaller = lower perceived latency, but
+	// any network jitter > delay causes a stutter. With 60Hz sends, ~60ms
+	// gives us 3-4 samples of cushion.
+	const INTERP_DELAY_MS = 60;
+	// Cap how many samples we retain per peer. We only ever need the two
+	// bracketing the render time; an extra slot or two protects against
+	// out-of-order arrivals.
+	const GHOST_BUFFER_MAX = 6;
+
+	// Leaderboard fetch URL (derived from the WS URL).
+	const LEADERBOARD_URL = (import.meta.env.VITE_WS_URL ?? "ws://localhost:4000/ws")
+		.replace(/^ws/, "http")
+		.replace(/\/ws$/, "/leaderboard");
 
 interface GhostSample {
 	recvTime: number; // performance.now() at WS receipt
@@ -76,6 +81,9 @@ function lerpSample(s0: DecodedSnapshot, s1: DecodedSnapshot, t: number): Decode
 interface CAbi {
 	setLocalIdentity: (name: string, r: number, g: number, b: number) => void;
 	loadMap: (path: string) => void;
+	loadChallenge: () => void;
+	getMaxSpeed: () => number;
+	resetChallenge: () => void;
 	pushGhost: (
 		id: string,
 		posX: number, posY: number,
@@ -111,6 +119,9 @@ interface CAbi {
 function bindCAbi(mod: SrModule): CAbi {
 	const f_set_id = mod.cwrap("sr_set_local_identity", null, ["string", "number", "number", "number"]);
 	const f_load = mod.cwrap("sr_load_map", null, ["string"]);
+	const f_load_ch = mod.cwrap("sr_load_challenge", null, []);
+	const f_max_sp = mod.cwrap("sr_get_max_speed", "number", []);
+	const f_reset_ch = mod.cwrap("sr_reset_challenge", null, []);
 	const f_push = mod.cwrap("sr_push_ghost", null, [
 		"string",
 		"number", "number",
@@ -155,6 +166,15 @@ function bindCAbi(mod: SrModule): CAbi {
 		},
 		loadMap: (path) => {
 			f_load(path);
+		},
+		loadChallenge: () => {
+			f_load_ch();
+		},
+		getMaxSpeed: () => {
+			return f_max_sp() as number;
+		},
+		resetChallenge: () => {
+			f_reset_ch();
 		},
 		pushGhost: (id, posX, posY, velX, velY, facing, anim, grappleActive, gxOrigin, gyOrigin, gxAttach, gyAttach, gLength, gTaut, sizeX, sizeY) => {
 			f_push(
@@ -235,18 +255,22 @@ export function Game(): JSX.Element {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const abiRef = useRef<CAbi | null>(null);
 	const trailAbiRef = useRef<ReturnType<typeof bindTrailAbi> | null>(null);
-	// Set of peer ids whose trail we've already loaded (so we don't
-	// re-decode the same .srt every time a peer reshares — they may
-	// resend on reconnect, but mid-session resends are debounced).
 	const loadedPeerTrailsRef = useRef<Set<string>>(new Set());
 	const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 	const [error, setError] = useState<string | null>(null);
 	const [hovered, setHovered] = useState<HoveredLabel | null>(null);
 	const [localSpeed, setLocalSpeed] = useState<number | null>(null);
 	const [fps, setFps] = useState<number>(0);
-	// Mouse position in canvas-local pixels (matches sr_get_player_screen_pos
-	// output). null when the cursor isn't over the canvas.
 	const cursorRef = useRef<{ x: number; y: number } | null>(null);
+
+	// Grapple Challenge state
+	const isChallenge = room?.mode === "grapple_challenge";
+	const [sessionMax, setSessionMax] = useState<number>(0);
+	const [scoreAck, setScoreAck] = useState<{ rank: number; dailyBest: number } | null>(null);
+	const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+	const [leaderboardEntries, setLeaderboardEntries] = useState<Array<{ rank: number; name: string; maxSpeed: number }>>([]);
+	const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+	const submittedRef = useRef(false);
 
 	// Memo'd lookup: peer id -> {name, color}. Updated on every room_state.
 	const peerInfo = useMemo(() => {
@@ -272,7 +296,12 @@ export function Game(): JSX.Element {
 					identity.color[0], identity.color[1], identity.color[2],
 				);
 				GAME_ACTIONS.forEach((action, idx) => abi.setBinding(idx, bindings[action].code));
-				abi.loadMap(`/maps/${room.mapId}.sr`);
+
+				if (room.mode === "grapple_challenge") {
+					abi.loadChallenge();
+				} else {
+					abi.loadMap(`/maps/${room.mapId}.sr`);
+				}
 				// Trail is best-effort — failures must not block the game
 				// from starting. If the user picked a custom .srt, load
 				// that into the local player's track (id ""); otherwise
@@ -364,16 +393,18 @@ export function Game(): JSX.Element {
 			if (bind.code === resetCode) {
 				e.preventDefault();
 				e.stopImmediatePropagation();
-				abi.resetLocal();
+				if (isChallenge) abi.resetChallenge();
+				else abi.resetLocal();
 				return;
 			}
-			if (bind.code === saveCode) {
+			// Save/load are disabled in Grapple Challenge.
+			if (!isChallenge && bind.code === saveCode) {
 				e.preventDefault();
 				e.stopImmediatePropagation();
 				abi.saveState();
 				return;
 			}
-			if (bind.code === loadCode) {
+			if (!isChallenge && bind.code === loadCode) {
 				e.preventDefault();
 				e.stopImmediatePropagation();
 				abi.loadState();
@@ -382,7 +413,7 @@ export function Game(): JSX.Element {
 		};
 		window.addEventListener("keydown", onKey, true);
 		return () => window.removeEventListener("keydown", onKey, true);
-	}, [status, bindings.reset.code, bindings.save_state.code, bindings.load_state.code]);
+	}, [status, isChallenge, bindings.reset.code, bindings.save_state.code, bindings.load_state.code]);
 
 	// Broadcast our own .srt blob to the room once the WASM is ready
 	// (and again whenever the user picks a different one). Empty body
@@ -631,7 +662,7 @@ export function Game(): JSX.Element {
 			}
 
 			// Local-player speed (rounded to int — the readout is whole-px).
-			if (speedometerEnabled) {
+			if (speedometerEnabled || isChallenge) {
 				const bytes = abi.getLocalSnapshot();
 				if (bytes) {
 					const snap = decodeSnapshot(bytes);
@@ -642,6 +673,12 @@ export function Game(): JSX.Element {
 				}
 			} else if (localSpeed !== null) {
 				setLocalSpeed(null);
+			}
+
+			// Challenge mode: poll the C++ side's session max.
+			if (isChallenge) {
+				const maxSp = Math.round(abi.getMaxSpeed());
+				setSessionMax((prev) => (prev === maxSp ? prev : maxSp));
 			}
 
 			// Hover hit-test only when the cursor is over the canvas.
@@ -709,6 +746,48 @@ export function Game(): JSX.Element {
 		return () => window.removeEventListener("keydown", handler);
 	}, [status]);
 
+	// ── Challenge leaderboard helpers ──────────────────────────────────
+
+	const submitScore = useCallback(() => {
+		if (!isChallenge || sessionMax <= 0 || submittedRef.current) return;
+		submittedRef.current = true;
+		ws.send({ type: "submit_score", maxSpeed: sessionMax });
+	}, [isChallenge, sessionMax, ws]);
+
+	const fetchLeaderboard = useCallback(async () => {
+		setLeaderboardLoading(true);
+		try {
+			const today = new Date().toISOString().slice(0, 10);
+			const res = await fetch(`${LEADERBOARD_URL}?date=${today}&limit=20`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const data = (await res.json()) as Array<{ rank: number; name: string; maxSpeed: number }>;
+			setLeaderboardEntries(data);
+		} catch {
+			setLeaderboardEntries([]);
+		} finally {
+			setLeaderboardLoading(false);
+		}
+	}, []);
+
+	// Listen for score_ack from server.
+	useEffect(() => {
+		const off = ws.onMessage((msg: ServerMsg) => {
+			if (msg.type === "score_ack") {
+				setScoreAck({ rank: msg.rank, dailyBest: msg.dailyBest });
+			}
+		});
+		return off;
+	}, [ws]);
+
+	// Auto-submit on unmount in challenge mode.
+	useEffect(() => {
+		return () => {
+			if (isChallenge && sessionMax > 0 && !submittedRef.current) {
+				ws.send({ type: "submit_score", maxSpeed: sessionMax });
+			}
+		};
+	}, [isChallenge, sessionMax, ws]);
+
 	const onCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
@@ -742,9 +821,45 @@ export function Game(): JSX.Element {
 				onMouseLeave={onCanvasMouseLeave}
 			/>
 			<div className="game-overlay" aria-hidden>
-				{speedometerEnabled && localSpeed !== null && (
+				{!isChallenge && speedometerEnabled && localSpeed !== null && (
 					<div className="speed-readout" style={{ color: speedColor(localSpeed) }}>
 						{localSpeed}
+					</div>
+				)}
+				{isChallenge && status === "ready" && (
+					<div className="challenge-hud">
+						<div className="challenge-speed-row">
+							<span className="challenge-current" style={{ color: speedColor(localSpeed ?? 0) }}>
+								{localSpeed ?? 0}
+							</span>
+							<span className="challenge-label">speed</span>
+						</div>
+						<div className="challenge-max-row">
+							<span className="challenge-max-value">{sessionMax}</span>
+							<span className="challenge-label">session max</span>
+						</div>
+						{scoreAck && (
+							<div className="challenge-score-ack">
+								Rank #{scoreAck.rank} &middot; daily best {scoreAck.dailyBest}
+							</div>
+						)}
+						<div className="challenge-buttons">
+							<button
+								type="button"
+								className="challenge-btn"
+								onClick={submitScore}
+								disabled={submittedRef.current || sessionMax <= 0}
+							>
+								{submittedRef.current ? "Submitted" : "Submit Score"}
+							</button>
+							<button
+								type="button"
+								className="challenge-btn challenge-btn-alt"
+								onClick={() => { void fetchLeaderboard(); setLeaderboardOpen(true); }}
+							>
+								Leaderboard
+							</button>
+						</div>
 					</div>
 				)}
 				{hovered && (
@@ -760,6 +875,50 @@ export function Game(): JSX.Element {
 				)}
 				{status === "ready" && <div className="fps-readout">{fps} fps</div>}
 			</div>
+
+			{leaderboardOpen && (
+				<div className="modal-backdrop" onClick={() => setLeaderboardOpen(false)}>
+					<div className="modal-box challenge-leaderboard" onClick={(e) => e.stopPropagation()}>
+						<div className="modal-header">
+							<h2 className="modal-title">Daily Leaderboard</h2>
+							<button
+								type="button"
+								className="modal-close"
+								onClick={() => setLeaderboardOpen(false)}
+							>
+								&times;
+							</button>
+						</div>
+						<div className="modal-body">
+							{leaderboardLoading ? (
+								<div className="text-sm text-zinc-400">Loading…</div>
+							) : leaderboardEntries.length === 0 ? (
+								<div className="text-sm text-zinc-400">No scores today yet.</div>
+							) : (
+								<table className="leaderboard-table">
+									<thead>
+										<tr>
+											<th>#</th>
+											<th>Name</th>
+											<th>Speed</th>
+										</tr>
+									</thead>
+									<tbody>
+										{leaderboardEntries.map((e) => (
+											<tr key={e.rank}>
+												<td className="lb-rank">{e.rank}</td>
+												<td className="lb-name">{e.name}</td>
+												<td className="lb-speed">{e.maxSpeed}</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							)}
+						</div>
+					</div>
+				</div>
+			)}
+
 			{status === "loading" && <div className="game-status">Loading game…</div>}
 			{status === "error" && (
 				<div className="game-status game-status-error">
