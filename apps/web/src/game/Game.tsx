@@ -522,28 +522,18 @@ export function Game(): JSX.Element {
 				e.preventDefault();
 				e.stopImmediatePropagation();
 				if (isRgChallenge) {
-					// Auto-submit before resetting if we beat our all-time best this run.
-					if (!submittedRef.current) {
-						const best = Math.round(abi.getRgBest());
-						if (best > 0 && best > allTimeBestRef.current) {
-							allTimeBestRef.current = best;
-							submittedRef.current = true;
-							ws.send({ type: "submit_rg_score", maxStreak: best });
-						}
-					}
+					// Reset state. Submission happens automatically on streak
+					// break via submit_rg_run, which carries the recorded log
+					// for server-side replay validation. Sending a bare
+					// submit_rg_score here would be ignored (no backing run
+					// for the validator), so we don't.
 					submittedRef.current = false;
 					prevRgConsecutiveRef.current = 0;
 					abi.resetRgChallenge();
 				} else if (isChallenge) {
-					// Auto-submit before resetting if we beat our all-time best this run.
-					if (!submittedRef.current) {
-						const maxSp = Math.round(abi.getMaxSpeed());
-						if (maxSp > 0 && maxSp > allTimeBestRef.current) {
-							allTimeBestRef.current = maxSp;
-							submittedRef.current = true;
-							ws.send({ type: "submit_score", maxSpeed: maxSp });
-						}
-					}
+					// Same here: reset only. submit_run fires on
+					// floor-touch-after-airborne and that's the only path
+					// that produces a verifiable score.
 					submittedRef.current = false;
 					abi.resetChallenge();
 				} else {
@@ -924,6 +914,9 @@ export function Game(): JSX.Element {
 								finished.inputs.subarray(i, i + chunk) as unknown as number[],
 							);
 						}
+						// submit_run carries the input log; the server inserts
+						// the score (and broadcasts) once replay validation
+						// passes. No parallel submit_score needed.
 						ws.send({
 							type: "submit_run",
 							claimedMaxSpeed: speedRounded,
@@ -931,7 +924,6 @@ export function Game(): JSX.Element {
 							simVersion: abi.runSimVersion(),
 							inputs: btoa(b64),
 						});
-						ws.send({ type: "submit_score", maxSpeed: speedRounded });
 					}
 				}
 			}
@@ -949,12 +941,11 @@ export function Game(): JSX.Element {
 				prevRgConsecutiveRef.current = rg;
 				if (prevRg > 0 && rg === 0 && best > 0 && best > allTimeBestRef.current) {
 					allTimeBestRef.current = best;
-					ws.send({ type: "submit_rg_score", maxStreak: best });
-
 					// Snapshot the recorder for server-side replay validation.
 					// Recorder keeps running across snapshots, so subsequent
 					// PR breaks in the same session resubmit a strictly-longer
-					// log starting from the same level-load anchor.
+					// log starting from the same level-load anchor. The server
+					// inserts the score + broadcasts once the replay validates.
 					const snap = abi.snapshotRun();
 					if (snap !== null && snap.inputs.length > 0) {
 						let b64 = "";
@@ -1137,21 +1128,10 @@ export function Game(): JSX.Element {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [status, isChallenge, isRgChallenge]);
 
-	// Auto-submit on unmount in challenge mode.
-	useEffect(() => {
-		return () => {
-			if (isChallenge && !submittedRef.current) {
-				const abi = abiRef.current;
-				if (abi) {
-					const maxSp = Math.round(abi.getMaxSpeed());
-					if (maxSp > 0) {
-						submittedRef.current = true;
-						ws.send({ type: "submit_score", maxSpeed: maxSp });
-					}
-				}
-			}
-		};
-	}, [isChallenge, ws]);
+	// (No unmount-time submit. Scores are only minted from
+	// floor-touch-after-airborne via submit_run, which carries the input
+	// log for server-side replay validation. A bare submit_score with no
+	// backing run would be a no-op on the new server anyway.)
 
 	// Stop the active replay and put the local player back in a clean state.
 	// We don't try to restore mid-run state — replay clobbers the level and

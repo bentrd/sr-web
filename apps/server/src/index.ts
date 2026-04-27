@@ -571,6 +571,11 @@ const server = Bun.serve<WsData, never>({
 				}
 
 				case "submit_score": {
+					// Score insertion is now driven by submit_run's replay
+					// validation callback — only verified runs land in the
+					// scores table. submit_score remains for legacy clients
+					// and for the player to sync their current rank, but it
+					// no longer writes the DB or broadcasts.
 					if (!ws.data.roomCode) return;
 					const room = store.getRoom(ws.data.roomCode);
 					if (!room || room.mode !== "grapple_challenge") return;
@@ -583,20 +588,6 @@ const server = Bun.serve<WsData, never>({
 					}
 					const me = room.players.get(ws.data.playerId);
 					if (!me) return;
-
-					// Rate-limit
-					const lastSubmit = scoreCooldowns.get(ws.data.playerId) ?? 0;
-					const now = Date.now();
-					if (now - lastSubmit < SCORE_SUBMIT_COOLDOWN_MS) {
-						return send(ws, {
-							type: "error",
-							code: "validation",
-							message: `submit too fast — wait ${SCORE_SUBMIT_COOLDOWN_MS}ms`,
-						});
-					}
-					scoreCooldowns.set(ws.data.playerId, now);
-
-					const isPR = submitScore(todayDate(), me.name, Math.round(msg.maxSpeed));
 					const rank = allTimeRankForPlayer(me.name);
 					const dailyBest = allTimeBestForPlayer(me.name);
 					send(ws, {
@@ -604,22 +595,6 @@ const server = Bun.serve<WsData, never>({
 						rank,
 						dailyBest,
 					});
-					// Only rebroadcast the leaderboard when something actually
-					// changed. Non-PR submissions are dropped server-side, so
-					// the rest of the room would just receive a no-op snapshot.
-					if (isPR) {
-						const lb = getAllTimeLeaderboard(10);
-						server.publish("leaderboard-speed", JSON.stringify({
-							type: "leaderboard",
-							date: todayDate(),
-							entries: lb.map((e) => ({
-								rank: e.rank,
-								name: e.name,
-								maxSpeed: e.maxSpeed,
-								runId: e.runId,
-							})),
-						} satisfies import("@sr-web/protocol").Leaderboard));
-					}
 					return;
 				}
 
@@ -720,11 +695,14 @@ const server = Bun.serve<WsData, never>({
 					}
 
 					// Fire the replay validator without blocking the response.
-					// Marks `verified = 1` when the replayed peak speed matches
-					// the claimed value within tolerance, `-1` when it diverges,
-					// and leaves it at 0 when the replay itself errors out (so
-					// we can re-process those manually instead of treating an
-					// engine bug as a cheat).
+					// On verdict=1 (claimed speed matches replayed peak within
+					// tolerance) we ALSO insert into `scores` + broadcast the
+					// updated leaderboard + ack the player. That way only
+					// verified runs ever surface — fakes get rejected before
+					// they're visible to anyone. On verdict=-1 the run is
+					// stamped rejected and the score is silently dropped.
+					const playerName = me.name;
+					const claimed = Math.round(m.claimedMaxSpeed);
 					void replayRun(raw, m.durationTicks).then((res) => {
 						if (!res.ok) return;
 						const verdict: 1 | -1 = speedMatches(m.claimedMaxSpeed, res.maxSpeed)
@@ -735,6 +713,40 @@ const server = Bun.serve<WsData, never>({
 						} catch {
 							// DB write failures here are non-fatal.
 						}
+						if (verdict !== 1) return;
+						let isPR = false;
+						try {
+							isPR = submitScore(todayDate(), playerName, claimed);
+						} catch {
+							return;
+						}
+						if (!isPR) return;
+						// Broadcast the new leaderboard (with this run's runId
+						// already linked) so every subscribed client refreshes
+						// in real time without polling.
+						const lb = getAllTimeLeaderboard(10);
+						server.publish("leaderboard-speed", JSON.stringify({
+							type: "leaderboard",
+							date: todayDate(),
+							entries: lb.map((e) => ({
+								rank: e.rank,
+								name: e.name,
+								maxSpeed: e.maxSpeed,
+								runId: e.runId,
+							})),
+						} satisfies import("@sr-web/protocol").Leaderboard));
+						// Send the submitter a fresh ack with their new rank.
+						// ws may have closed during validation; send() noops
+						// safely on a dead socket.
+						try {
+							send(ws, {
+								type: "score_ack",
+								rank: allTimeRankForPlayer(playerName),
+								dailyBest: allTimeBestForPlayer(playerName),
+							});
+						} catch {
+							// disconnected between submit + verify — fine.
+						}
 					}).catch(() => {
 						// Background — never throw out of the handler.
 					});
@@ -742,6 +754,10 @@ const server = Bun.serve<WsData, never>({
 				}
 
 				case "submit_rg_score": {
+					// Mirror of submit_score: insertion is now driven by
+					// submit_rg_run's replay validation. This handler only
+					// returns the player's current standing for legacy
+					// clients — no DB write, no broadcast.
 					if (!ws.data.roomCode) return;
 					const room = store.getRoom(ws.data.roomCode);
 					if (!room || room.mode !== "rg_challenge") return;
@@ -755,36 +771,9 @@ const server = Bun.serve<WsData, never>({
 					}
 					const me = room.players.get(ws.data.playerId);
 					if (!me) return;
-					const lastSubmit = scoreCooldowns.get(ws.data.playerId) ?? 0;
-					const now = Date.now();
-					if (now - lastSubmit < SCORE_SUBMIT_COOLDOWN_MS) {
-						return send(ws, {
-							type: "error",
-							code: "validation",
-							message: `submit too fast — wait ${SCORE_SUBMIT_COOLDOWN_MS}ms`,
-						});
-					}
-					scoreCooldowns.set(ws.data.playerId, now);
-					const isPR = submitRgScore(todayDate(), me.name, Math.round(streak));
 					const rank = rgAllTimeRankForPlayer(me.name);
 					const dailyBest = rgAllTimeBestForPlayer(me.name);
 					send(ws, { type: "rg_score_ack", rank, dailyBest });
-					// Only rebroadcast on a real PR. Non-PR submissions are
-					// dropped server-side; resending the same leaderboard
-					// would be wasted bandwidth.
-					if (isPR) {
-						const lb = getRgAllTimeLeaderboard(10);
-						server.publish("leaderboard-rg", JSON.stringify({
-							type: "rg_leaderboard",
-							date: todayDate(),
-							entries: lb.map((e) => ({
-								rank: e.rank,
-								name: e.name,
-								maxStreak: e.maxStreak,
-								runId: e.runId,
-							})),
-						} satisfies import("@sr-web/protocol").RgLeaderboard));
-					}
 					return;
 				}
 
@@ -874,6 +863,11 @@ const server = Bun.serve<WsData, never>({
 						return;
 					}
 
+					// Same flow as submit_run: on verdict=1 we insert into
+					// rg_scores + broadcast + ack. Only verified streaks ever
+					// surface on the leaderboard.
+					const playerName = me.name;
+					const claimed = Math.round(m.claimedMaxStreak);
 					void replayRgRun(raw, m.durationTicks).then((res) => {
 						if (!res.ok) return;
 						const verdict: 1 | -1 = streakMatches(m.claimedMaxStreak, res.maxStreak)
@@ -883,6 +877,34 @@ const server = Bun.serve<WsData, never>({
 							markRgRunVerified(rgRunId, verdict);
 						} catch {
 							// Non-fatal.
+						}
+						if (verdict !== 1) return;
+						let isPR = false;
+						try {
+							isPR = submitRgScore(todayDate(), playerName, claimed);
+						} catch {
+							return;
+						}
+						if (!isPR) return;
+						const lb = getRgAllTimeLeaderboard(10);
+						server.publish("leaderboard-rg", JSON.stringify({
+							type: "rg_leaderboard",
+							date: todayDate(),
+							entries: lb.map((e) => ({
+								rank: e.rank,
+								name: e.name,
+								maxStreak: e.maxStreak,
+								runId: e.runId,
+							})),
+						} satisfies import("@sr-web/protocol").RgLeaderboard));
+						try {
+							send(ws, {
+								type: "rg_score_ack",
+								rank: rgAllTimeRankForPlayer(playerName),
+								dailyBest: rgAllTimeBestForPlayer(playerName),
+							});
+						} catch {
+							// disconnected — fine.
 						}
 					}).catch(() => {});
 					return;
