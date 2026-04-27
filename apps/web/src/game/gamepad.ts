@@ -20,6 +20,25 @@ const DEAD_ZONE = 0.15;
 // triggers, and axes all use this).
 const THRESHOLD = 0.5;
 
+// Log gamepad connections for debugging non-standard controllers.
+// The 8BitDo Pro 2 and similar controllers often report mapping="" instead
+// of "standard", which means button indices don't match the Xbox layout.
+if (typeof window !== "undefined") {
+	window.addEventListener("gamepadconnected", (e) => {
+		const gp = e.gamepad;
+		console.log(
+			"[gamepad] connected:",
+			gp.id,
+			"| mapping:", JSON.stringify(gp.mapping),
+			"| buttons:", gp.buttons.length,
+			"| axes:", gp.axes.length,
+		);
+	});
+	window.addEventListener("gamepaddisconnected", (e) => {
+		console.log("[gamepad] disconnected:", e.gamepad.id);
+	});
+}
+
 // --- Button / axis detection helpers ---
 
 function isPressed(gamepad: Gamepad, index: number): boolean {
@@ -66,7 +85,11 @@ export type PushControllerInputFn = (action: number, pressed: number) => void;
 
 export function pollGamepads(push: PushControllerInputFn): void {
 	const gamepads = navigator.getGamepads();
-	const gp = gamepads.find((g) => g !== null);
+	// Prefer a standard-mapped gamepad (Xbox layout), but accept any
+	// connected controller as fallback. This handles 8BitDo and other
+	// controllers that report mapping="" in non-X-input modes.
+	const gp = gamepads.find((g) => g !== null && g.mapping === "standard")
+		?? gamepads.find((g) => g !== null);
 	const bindings = getGamepadBindings();
 
 	// If no controller connected, clear all controller inputs.
@@ -119,7 +142,9 @@ export function resetRebindState(): void {
 
 export function pollGamepadForRebind(): GamepadBinding | null {
 	const gamepads = navigator.getGamepads();
-	const gp = gamepads.find((g) => g !== null);
+	// Same priority: standard mapping first, then any controller.
+	const gp = gamepads.find((g) => g !== null && g.mapping === "standard")
+		?? gamepads.find((g) => g !== null);
 	if (!gp) return null;
 
 	// Lazy init on first call: capture current state so we only
