@@ -37,7 +37,16 @@ declare global {
 	interface Window {
 		createSrModule?: CreateSrModule;
 	}
+	// Injected by Vite at build time — see vite.config.ts.
+	const __SR_BUILD_ID__: string;
 }
+
+// Cache-buster appended to sr.js / sr.wasm / sr.data so each deploy is
+// fetched fresh. Without this, GH Pages' max-age=600 + the fixed
+// filenames mean clients can ride a stale wasm for up to 10 minutes
+// after a deploy.
+const BUILD_ID =
+	typeof __SR_BUILD_ID__ !== "undefined" ? __SR_BUILD_ID__ : "dev";
 
 // `BASE_URL` is the public path Vite was built with — `/` in dev, `/sr-web/`
 // for GH Pages. Always trailing-slashed. We need to anchor sr.js + its
@@ -55,7 +64,7 @@ function loadScript(): Promise<CreateSrModule> {
 			return;
 		}
 		const tag = document.createElement("script");
-		tag.src = `${BASE}sr.js`;
+		tag.src = `${BASE}sr.js?v=${BUILD_ID}`;
 		tag.async = true;
 		tag.onload = (): void => {
 			if (!window.createSrModule) {
@@ -86,7 +95,10 @@ export async function loadSrModule(canvas: HTMLCanvasElement): Promise<SrModule>
 	const cached = moduleByCanvas.get(canvas);
 	if (cached) return cached;
 	const promise = loadScript().then((factory) =>
-		factory({ canvas, locateFile: (path) => `${BASE}${path}` }),
+		factory({
+			canvas,
+			locateFile: (path) => `${BASE}${path}?v=${BUILD_ID}`,
+		}),
 	);
 	moduleByCanvas.set(canvas, promise);
 	return promise;
