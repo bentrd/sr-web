@@ -104,21 +104,15 @@ void level::generate_corridor(level& lvl, int32_t width, int32_t height, int32_t
 			lvl.m_tile_layer.set_tile(x, floor_y, tile_square);
 	}
 
-	// Solid walls at the left and right ends so players can't fall off.
-	// Span the full level height (above ceiling + below floor) so the
-	// player can't escape vertically either, and make the walls 5 tiles
-	// thick so high-speed runs (no_speed_cap) can't tunnel through.
-	constexpr int32_t k_wall_thickness = 5;
-	for (int32_t y = 0; y < height; y++)
+	// Single-tile walls at the left and right ends so players can't fall
+	// off the sides. Spans the air gap between ceiling and floor so it
+	// reads as a clean continuation of the corridor outline.
+	const int32_t wall_top = std::max(0, ceil_y);
+	const int32_t wall_bot = std::min(height - 1, floor_y);
+	for (int32_t y = wall_top; y <= wall_bot; y++)
 	{
-		for (int32_t k = 0; k < k_wall_thickness; k++)
-		{
-			if (k < width)
-				lvl.m_tile_layer.set_tile(k, y, tile_square);
-			const int32_t rx = width - 1 - k;
-			if (rx >= 0)
-				lvl.m_tile_layer.set_tile(rx, y, tile_square);
-		}
+		lvl.m_tile_layer.set_tile(0, y, tile_square);
+		lvl.m_tile_layer.set_tile(width - 1, y, tile_square);
 	}
 
 	// Player sits centered vertically in the air gap.
