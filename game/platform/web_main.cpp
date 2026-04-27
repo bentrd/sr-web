@@ -33,7 +33,10 @@ int main()
 
 	// fps=0 → tie to requestAnimationFrame
 	// simulate_infinite_loop=1 → main() returns control to the browser
-	emscripten_set_main_loop_arg(tick, &inst, 0, 1);
+	// Start at 300 Hz (3.33 ms per frame) so input polling and sim ticks
+	// share the same cadence from the first frame. sr_set_target_fps() can
+	// still switch to rAF (fps <= 0) or a different rate at runtime.
+	emscripten_set_main_loop_arg(tick, &inst, 300, 1);
 
 	return 0;
 }

@@ -322,6 +322,12 @@ export function Game(): JSX.Element {
 				if (cancelled) return;
 				const abi = bindCAbi(mod);
 				abiRef.current = abi;
+
+				// Expose gamepad polling to C++'s EM_ASM block so it runs
+				// at the main loop rate (300 Hz), not at rAF rate.
+				(mod as unknown as Record<string, unknown>)._gamepadPoll = (): void => {
+					pollGamepads(abi.pushControllerInput);
+				};
 				abi.setLocalIdentity(
 					identity.name || "Player",
 					identity.color[0], identity.color[1], identity.color[2],
@@ -879,17 +885,14 @@ export function Game(): JSX.Element {
 		return () => cancelAnimationFrame(raf);
 	}, [status, room, peerInfo, playerId, hovered, speedometerEnabled, localSpeed]);
 
-	// Poll gamepad state each rAF and push to WASM.
-	// The C++ side does NOT reset controller bits — JS is the sole
-	// source of truth. This avoids stutter from reset-timing races
-	// between the JS rAF and Emscripten's tick_frame.
+	// Clear controller bits when the page loses visibility (tab hidden).
+	// Normal polling is driven by the C++ main loop via EM_ASM, which
+	// runs at the same rate as tick_frame (300 Hz by default).
 	useEffect(() => {
 		if (status !== "ready") return;
 		const abi = abiRef.current;
 		if (!abi) return;
 
-		// Push zeros for all actions so stale bits don't persist
-		// across page visibility changes or component teardown.
 		const clearAll = (): void => {
 			for (let i = 0; i < 8; i++) abi.pushControllerInput(i, 0);
 		};
@@ -899,15 +902,7 @@ export function Game(): JSX.Element {
 		};
 		document.addEventListener("visibilitychange", onHidden);
 
-		let raf = 0;
-		const poll = (): void => {
-			pollGamepads(abi.pushControllerInput);
-			raf = requestAnimationFrame(poll);
-		};
-		raf = requestAnimationFrame(poll);
-
 		return () => {
-			cancelAnimationFrame(raf);
 			document.removeEventListener("visibilitychange", onHidden);
 			clearAll();
 		};

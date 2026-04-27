@@ -2,6 +2,10 @@
 #include <iostream>
 #include <thread>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "instance.h"
 #include "command/command_functions.h"
 #include "drawing/draw_util.h"
@@ -158,6 +162,17 @@ void instance::update_input()
 	m_input_handler.m_inputs->pressed_keys.reset();
 	m_input_handler.m_inputs->pressed_buttons.reset();
 	glfwPollEvents();
+
+#ifdef __EMSCRIPTEN__
+	// Poll controller state synchronously inside the main loop so
+	// gamepad input is sampled at the same rate as keyboard (300 Hz
+	// by default), not at the separate JS requestAnimationFrame rate.
+	EM_ASM({
+		if (typeof Module._gamepadPoll === "function") {
+			Module._gamepadPoll();
+		}
+	});
+#endif
 
 	m_playground.update_input(m_inputs);
 }
