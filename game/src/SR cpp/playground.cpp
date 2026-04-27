@@ -50,6 +50,8 @@ void replay_state::clear()
 	next_event_bitmask = 0;
 	current_bitmask = 0;
 	have_event = false;
+	was_on_ground_prev = true;
+	has_been_airborne = false;
 }
 
 // Decode the next (varint delta, uint8 bitmask) from the log into
@@ -277,6 +279,24 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 	if (m_game_mode == emu::GameMode::rg_challenge && m_player != nullptr)
 	{
 		emu::update_rg_state(m_rg_state, *m_player, m_state.m_time);
+	}
+
+	// --- Replay floor-touch detector ---
+	// The recorder logs continuously across attempts in a single session,
+	// so a submitted run blob can contain multiple floor touches (each
+	// failed attempt before the PR run, plus the PR run itself). We want
+	// the viewer to only see one complete attempt — stop the replay on
+	// the first floor-touch-after-airborne event. Mirrors the recorder's
+	// has_been_airborne / was_on_ground_prev logic.
+	if (m_replay.is_active && m_player != nullptr && m_player->m_actor != nullptr)
+	{
+		const bool is_on_ground = m_player->d.is_on_ground;
+		if (!is_on_ground) m_replay.has_been_airborne = true;
+		if (m_replay.has_been_airborne && !m_replay.was_on_ground_prev && is_on_ground)
+		{
+			m_replay.is_active = false;
+		}
+		m_replay.was_on_ground_prev = is_on_ground;
 	}
 
 	// --- Challenge run recorder (continuous recording) ---

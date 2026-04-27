@@ -596,7 +596,7 @@ const server = Bun.serve<WsData, never>({
 					}
 					scoreCooldowns.set(ws.data.playerId, now);
 
-					submitScore(todayDate(), me.name, Math.round(msg.maxSpeed));
+					const isPR = submitScore(todayDate(), me.name, Math.round(msg.maxSpeed));
 					const rank = allTimeRankForPlayer(me.name);
 					const dailyBest = allTimeBestForPlayer(me.name);
 					send(ws, {
@@ -604,18 +604,22 @@ const server = Bun.serve<WsData, never>({
 						rank,
 						dailyBest,
 					});
-					// Broadcast updated global leaderboard to all subscribed clients.
-					const lb = getAllTimeLeaderboard(10);
-					server.publish("leaderboard-speed", JSON.stringify({
-						type: "leaderboard",
-						date: todayDate(),
-						entries: lb.map((e) => ({
-							rank: e.rank,
-							name: e.name,
-							maxSpeed: e.maxSpeed,
-							runId: e.runId,
-						})),
-					} satisfies import("@sr-web/protocol").Leaderboard));
+					// Only rebroadcast the leaderboard when something actually
+					// changed. Non-PR submissions are dropped server-side, so
+					// the rest of the room would just receive a no-op snapshot.
+					if (isPR) {
+						const lb = getAllTimeLeaderboard(10);
+						server.publish("leaderboard-speed", JSON.stringify({
+							type: "leaderboard",
+							date: todayDate(),
+							entries: lb.map((e) => ({
+								rank: e.rank,
+								name: e.name,
+								maxSpeed: e.maxSpeed,
+								runId: e.runId,
+							})),
+						} satisfies import("@sr-web/protocol").Leaderboard));
+					}
 					return;
 				}
 
@@ -761,22 +765,26 @@ const server = Bun.serve<WsData, never>({
 						});
 					}
 					scoreCooldowns.set(ws.data.playerId, now);
-					submitRgScore(todayDate(), me.name, Math.round(streak));
+					const isPR = submitRgScore(todayDate(), me.name, Math.round(streak));
 					const rank = rgAllTimeRankForPlayer(me.name);
 					const dailyBest = rgAllTimeBestForPlayer(me.name);
 					send(ws, { type: "rg_score_ack", rank, dailyBest });
-					// Broadcast updated global RG leaderboard to all subscribed clients.
-					const lb = getRgAllTimeLeaderboard(10);
-					server.publish("leaderboard-rg", JSON.stringify({
-						type: "rg_leaderboard",
-						date: todayDate(),
-						entries: lb.map((e) => ({
-							rank: e.rank,
-							name: e.name,
-							maxStreak: e.maxStreak,
-							runId: e.runId,
-						})),
-					} satisfies import("@sr-web/protocol").RgLeaderboard));
+					// Only rebroadcast on a real PR. Non-PR submissions are
+					// dropped server-side; resending the same leaderboard
+					// would be wasted bandwidth.
+					if (isPR) {
+						const lb = getRgAllTimeLeaderboard(10);
+						server.publish("leaderboard-rg", JSON.stringify({
+							type: "rg_leaderboard",
+							date: todayDate(),
+							entries: lb.map((e) => ({
+								rank: e.rank,
+								name: e.name,
+								maxStreak: e.maxStreak,
+								runId: e.runId,
+							})),
+						} satisfies import("@sr-web/protocol").RgLeaderboard));
+					}
 					return;
 				}
 

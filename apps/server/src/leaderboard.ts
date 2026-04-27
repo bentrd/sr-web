@@ -62,13 +62,18 @@ export interface LeaderboardRow {
 	runId: number | null;
 }
 
-// Insert a score. The caller is responsible for validation and
-// rate-limiting — this function is a dumb sink.
-export function submitScore(date: string, playerName: string, maxSpeed: number): void {
+// Insert a score iff it strictly beats the player's prior all-time best.
+// Returns true if the row was inserted (a PR), false when ignored as
+// non-PR. The leaderboard already groups by player_name and takes MAX,
+// so non-PR rows would just bloat the table without ever surfacing.
+export function submitScore(date: string, playerName: string, maxSpeed: number): boolean {
+	const prior = allTimeBestForPlayer(playerName);
+	if (maxSpeed <= prior) return false;
 	const stmt = db.prepare(
 		"INSERT INTO scores (date, player_name, max_speed, timestamp) VALUES (?1, ?2, ?3, ?4)",
 	);
 	stmt.run(date, playerName, maxSpeed, Date.now());
+	return true;
 }
 
 // Returns top N entries all-time, deduplicated by player
@@ -156,17 +161,22 @@ function ensureRgTable(): void {
 	db.run(`CREATE INDEX IF NOT EXISTS idx_rg_scores_date_name ON rg_scores(date, player_name)`);
 }
 
+// Same PR-gating as submitScore: only insert when the new streak strictly
+// beats the player's prior all-time best. Returns true if inserted.
 export function submitRgScore(
 	date: string,
 	playerName: string,
 	maxStreak: number,
-): void {
+): boolean {
 	ensureRgTable();
+	const prior = rgAllTimeBestForPlayer(playerName);
+	if (maxStreak <= prior) return false;
 	const stmt = db.prepare(`
 		INSERT INTO rg_scores (date, player_name, max_streak, timestamp)
 		VALUES (?1, ?2, ?3, ?4)
 	`);
 	stmt.run(date, playerName, maxStreak, Date.now());
+	return true;
 }
 
 export function getRgAllTimeLeaderboard(

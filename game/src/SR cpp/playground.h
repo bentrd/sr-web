@@ -100,6 +100,13 @@ struct replay_state
 	// recorded ticks).
 	std::uint8_t current_bitmask = 0;
 
+	// Mirror of the recorder's floor-touch detection. When the replayed
+	// player has been airborne and lands on the ground, we deactivate the
+	// replay so the user only sees the run that culminates in a floor
+	// touch — not subsequent attempts that may exist in the same log.
+	bool was_on_ground_prev = true;
+	bool has_been_airborne = false;
+
 	// Decode the next varint+byte from the log into next_event_tick /
 	// next_event_bitmask, advancing log_pos. Returns false on EOF or
 	// malformed varint (caller should mark have_event = false).
