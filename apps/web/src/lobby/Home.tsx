@@ -131,7 +131,11 @@ export function Home(): JSX.Element {
 		<main className="mx-auto flex w-full max-w-[128rem] flex-col gap-6 px-6 py-5">
 			<header className="flex flex-wrap items-center justify-between gap-4">
 				<div className="flex h-12 items-center gap-3">
-					<div className="size-12 rounded-xl bg-gradient-to-br from-amber-600/80 to-rose-700/80" />
+					<img
+						src="/logo.png"
+						alt="SR-Web"
+						className="size-12 rounded-xl object-cover"
+					/>
 					<div className="flex flex-col justify-center">
 						<div className="text-xl font-semibold leading-tight tracking-tight text-zinc-100">SR-Web</div>
 						<div className="text-xs leading-tight text-zinc-500">Browser SpeedRunners · ghost MP</div>

@@ -185,8 +185,8 @@ function bindCAbi(mod: SrModule): CAbi {
 			f_reset_ch();
 		},
 		loadRgChallenge: () => { f_load_rg_ch(); },
-		getRgConsecutive: () => f_rg_consecutive(),
-		getRgBest: () => f_rg_best(),
+		getRgConsecutive: () => f_rg_consecutive() as number,
+		getRgBest: () => f_rg_best() as number,
 		resetRgChallenge: () => { f_reset_rg_ch(); },
 		pushGhost: (id, posX, posY, velX, velY, facing, anim, grappleActive, gxOrigin, gyOrigin, gxAttach, gyAttach, gLength, gTaut, sizeX, sizeY) => {
 			f_push(
