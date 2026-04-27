@@ -11,6 +11,19 @@ import {
 
 const PORT = Number(process.env.PORT ?? 4000);
 
+const CORS_HEADERS: Record<string, string> = {
+	"access-control-allow-origin": "*",
+	"access-control-allow-methods": "GET, POST, OPTIONS",
+	"access-control-allow-headers": "content-type",
+};
+
+function corsResponse(body: BodyInit | null, init?: ResponseInit): Response {
+	return new Response(body, {
+		...init,
+		headers: { ...CORS_HEADERS, ...init?.headers },
+	});
+}
+
 // Hard cap on a single .srt blob's base64 size. Real workshop trails
 // run 30–200 KB (raw ZIP); we allow ~285 KB raw → ~384 KB base64 to
 // give headroom for animated trails with bigger sprite sheets.
@@ -86,25 +99,29 @@ const server = Bun.serve<WsData, never>({
 			return new Response("upgrade failed", { status: 400 });
 		}
 
-		if (url.pathname === "/health") return new Response("ok");
+		if (url.pathname === "/health") return corsResponse("ok");
 
 		if (url.pathname === "/leaderboard" && req.method === "GET") {
 			const date = url.searchParams.get("date") ?? todayDate();
 			const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 20)));
 			try {
 				const entries = getDailyLeaderboard(date, limit);
-				return new Response(JSON.stringify(entries), {
+				return corsResponse(JSON.stringify(entries), {
 					headers: { "content-type": "application/json", "cache-control": "public, max-age=30" },
 				});
 			} catch {
-				return new Response(JSON.stringify([]), {
+				return corsResponse(JSON.stringify([]), {
 					status: 500,
 					headers: { "content-type": "application/json" },
 				});
 			}
 		}
 
-		return new Response("sr-web server", { status: 200 });
+		if (req.method === "OPTIONS") {
+			return corsResponse(null, { status: 204 });
+		}
+
+		return corsResponse("sr-web server", { status: 200 });
 	},
 
 	websocket: {
