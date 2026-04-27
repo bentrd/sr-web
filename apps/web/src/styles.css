@@ -1123,3 +1123,70 @@ button.primary {
 	border-color: #555;
 	color: #bbb;
 }
+
+/* Persistent bottom-right leaderboard panel */
+.leaderboard-panel {
+	position: absolute;
+	bottom: 0.5rem;
+	right: 0.5rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.2rem;
+	padding: 0.4rem 0.5rem;
+	border-radius: 0.3rem;
+	background: rgba(0, 0, 0, 0.6);
+	pointer-events: auto;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	max-height: 18rem;
+	overflow-y: auto;
+}
+
+.lb-panel-title {
+	font-size: 0.6rem;
+	font-weight: 600;
+	color: rgba(255, 255, 255, 0.35);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	padding-bottom: 0.15rem;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lb-panel-table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.lb-panel-table tr {
+	border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.lb-panel-table td {
+	padding: 0.12rem 0.3rem;
+	font-size: 0.65rem;
+	white-space: nowrap;
+}
+
+.lb-panel-rank {
+	color: rgba(255, 255, 255, 0.4);
+	text-align: right;
+	padding-right: 0.5rem !important;
+}
+
+.lb-panel-name {
+	color: rgba(255, 255, 255, 0.7);
+	max-width: 8rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.lb-panel-value {
+	color: var(--accent);
+	font-weight: 600;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.lb-panel-me .lb-panel-name,
+.lb-panel-me .lb-panel-rank {
+	color: rgba(102, 187, 106, 0.9);
+}

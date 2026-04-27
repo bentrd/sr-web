@@ -13,4 +13,12 @@ namespace net
 	instance* active_instance();
 }
 
+extern "C"
+{
+void sr_load_rg_challenge();
+float sr_get_rg_consecutive();
+float sr_get_rg_best();
+void sr_reset_rg_challenge();
+}
+
 #endif

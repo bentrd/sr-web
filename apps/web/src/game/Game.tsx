@@ -84,6 +84,10 @@ interface CAbi {
 	loadChallenge: () => void;
 	getMaxSpeed: () => number;
 	resetChallenge: () => void;
+	loadRgChallenge: () => void;
+	getRgConsecutive: () => number;
+	getRgBest: () => number;
+	resetRgChallenge: () => void;
 	pushGhost: (
 		id: string,
 		posX: number, posY: number,
@@ -122,6 +126,10 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_load_ch = mod.cwrap("sr_load_challenge", null, []);
 	const f_max_sp = mod.cwrap("sr_get_max_speed", "number", []);
 	const f_reset_ch = mod.cwrap("sr_reset_challenge", null, []);
+	const f_load_rg_ch = mod.cwrap("sr_load_rg_challenge", null, []);
+	const f_rg_consecutive = mod.cwrap("sr_get_rg_consecutive", "number", []);
+	const f_rg_best = mod.cwrap("sr_get_rg_best", "number", []);
+	const f_reset_rg_ch = mod.cwrap("sr_reset_rg_challenge", null, []);
 	const f_push = mod.cwrap("sr_push_ghost", null, [
 		"string",
 		"number", "number",
@@ -176,6 +184,10 @@ function bindCAbi(mod: SrModule): CAbi {
 		resetChallenge: () => {
 			f_reset_ch();
 		},
+		loadRgChallenge: () => { f_load_rg_ch(); },
+		getRgConsecutive: () => f_rg_consecutive(),
+		getRgBest: () => f_rg_best(),
+		resetRgChallenge: () => { f_reset_rg_ch(); },
 		pushGhost: (id, posX, posY, velX, velY, facing, anim, grappleActive, gxOrigin, gyOrigin, gxAttach, gyAttach, gLength, gTaut, sizeX, sizeY) => {
 			f_push(
 				id,
@@ -263,13 +275,17 @@ export function Game(): JSX.Element {
 	const [fps, setFps] = useState<number>(0);
 	const cursorRef = useRef<{ x: number; y: number } | null>(null);
 
-	// Grapple Challenge state
+	// Speed Challenge state
 	const isChallenge = room?.mode === "grapple_challenge";
+	const isRgChallenge = room?.mode === "rg_challenge";
 	const [sessionMax, setSessionMax] = useState<number>(0);
+	const [rgConsecutive, setRgConsecutive] = useState<number>(0);
+	const [rgBest, setRgBest] = useState<number>(0);
 	const [scoreAck, setScoreAck] = useState<{ rank: number; dailyBest: number } | null>(null);
-	const [leaderboardOpen, setLeaderboardOpen] = useState(false);
-	const [leaderboardEntries, setLeaderboardEntries] = useState<Array<{ rank: number; name: string; maxSpeed: number }>>([]);
+	const [leaderboardEntries, setLeaderboardEntries] = useState<Array<{ rank: number; name: string; value: number }>>([]);
+	const [leaderboardMode, setLeaderboardMode] = useState<"speed" | "rg">("speed");
 	const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+	
 	const submittedRef = useRef(false);
 
 	// Memo'd lookup: peer id -> {name, color}. Updated on every room_state.
@@ -299,6 +315,8 @@ export function Game(): JSX.Element {
 
 				if (room.mode === "grapple_challenge") {
 					abi.loadChallenge();
+				} else if (room.mode === "rg_challenge") {
+					abi.loadRgChallenge();
 				} else {
 					abi.loadMap(`/maps/${room.mapId}.sr`);
 				}
@@ -393,11 +411,16 @@ export function Game(): JSX.Element {
 			if (bind.code === resetCode) {
 				e.preventDefault();
 				e.stopImmediatePropagation();
-				if (isChallenge) abi.resetChallenge();
-				else abi.resetLocal();
+				if (isRgChallenge) {
+					abi.resetRgChallenge();
+				} else if (isChallenge) {
+					abi.resetChallenge();
+				} else {
+					abi.resetLocal();
+				}
 				return;
 			}
-			// Save/load are disabled in Grapple Challenge.
+			// Save/load are disabled in Speed Challenge.
 			if (!isChallenge && bind.code === saveCode) {
 				e.preventDefault();
 				e.stopImmediatePropagation();
@@ -681,6 +704,14 @@ export function Game(): JSX.Element {
 				setSessionMax((prev) => (prev === maxSp ? prev : maxSp));
 			}
 
+			// RG Challenge: poll consecutive count + session best.
+			if (isRgChallenge) {
+				const rg = Math.round(abi.getRgConsecutive());
+				setRgConsecutive((prev) => (prev === rg ? prev : rg));
+				const best = Math.round(abi.getRgBest());
+				setRgBest((prev) => (prev === best ? prev : best));
+			}
+
 			// Hover hit-test only when the cursor is over the canvas.
 			const cursor = cursorRef.current;
 			if (cursor === null) {
@@ -759,14 +790,46 @@ export function Game(): JSX.Element {
 		ws.send({ type: "submit_score", maxSpeed: maxSp });
 	}, [isChallenge, ws]);
 
+	const submitRgScore = (): void => {
+		if (rgBest <= 0) return;
+		ws.send({ type: "submit_rg_score", maxStreak: rgBest });
+		submittedRef.current = true;
+	};
+
+	// Listen for rg_score_ack (server confirms RG score).
+	useEffect(() => {
+		return ws.onMessage((msg: ServerMsg) => {
+			if (msg.type === "rg_score_ack") {
+				setScoreAck({ rank: msg.rank, dailyBest: msg.dailyBest });
+			}
+		});
+	}, [ws]);
+
+	const fetchRgLeaderboard = async (): Promise<void> => {
+		setLeaderboardLoading(true);
+		try {
+			const res = await fetch(
+				`${LEADERBOARD_URL.replace("/leaderboard", "/rg-leaderboard")}?limit=10`,
+			);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const data = (await res.json()) as Array<{ rank: number; name: string; maxStreak: number }>;
+			setLeaderboardMode("rg");
+			setLeaderboardEntries(data.map((r) => ({ rank: r.rank, name: r.name, value: r.maxStreak })));
+		} catch {
+			setLeaderboardEntries([]);
+		} finally {
+			setLeaderboardLoading(false);
+		}
+	};
+
 	const fetchLeaderboard = useCallback(async () => {
 		setLeaderboardLoading(true);
 		try {
-			const today = new Date().toISOString().slice(0, 10);
-			const res = await fetch(`${LEADERBOARD_URL}?date=${today}&limit=20`);
+			setLeaderboardMode("speed");
+			const res = await fetch(`${LEADERBOARD_URL}?limit=10`);
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			const data = (await res.json()) as Array<{ rank: number; name: string; maxSpeed: number }>;
-			setLeaderboardEntries(data);
+			setLeaderboardEntries(data.map((r) => ({ rank: r.rank, name: r.name, value: r.maxSpeed })));
 		} catch {
 			setLeaderboardEntries([]);
 		} finally {
@@ -783,6 +846,14 @@ export function Game(): JSX.Element {
 		});
 		return off;
 	}, [ws]);
+
+	// Auto-fetch leaderboard when entering a challenge room.
+	useEffect(() => {
+		if (status !== "ready") return;
+		if (isChallenge) void fetchLeaderboard();
+		if (isRgChallenge) void fetchRgLeaderboard();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [status, isChallenge, isRgChallenge]);
 
 	// Auto-submit on unmount in challenge mode.
 	useEffect(() => {
@@ -852,7 +923,7 @@ export function Game(): JSX.Element {
 						</div>
 						{scoreAck && (
 							<div className="challenge-score-ack">
-								Rank #{scoreAck.rank} &middot; daily best {scoreAck.dailyBest}
+								Rank #{scoreAck.rank} &middot; all-time best {scoreAck.dailyBest}
 							</div>
 						)}
 						<div className="challenge-buttons">
@@ -864,12 +935,34 @@ export function Game(): JSX.Element {
 							>
 								{submittedRef.current ? "Submitted" : "Submit Score"}
 							</button>
+						</div>
+					</div>
+				)}
+				{isRgChallenge && status === "ready" && (
+					<div className="challenge-hud">
+						<div className="challenge-speed-row">
+							<span className="challenge-current" style={{ color: "#ffcc00" }}>
+								{rgConsecutive}
+							</span>
+							<span className="challenge-label">RG streak</span>
+						</div>
+						<div className="challenge-max-row">
+							<span className="challenge-max-value">{rgBest}</span>
+							<span className="challenge-label">session best</span>
+						</div>
+						{scoreAck && (
+							<div className="challenge-score-ack">
+								Rank #{scoreAck.rank} &middot; all-time best {scoreAck.dailyBest}
+							</div>
+						)}
+						<div className="challenge-buttons">
 							<button
 								type="button"
-								className="challenge-btn challenge-btn-alt"
-								onClick={() => { void fetchLeaderboard(); setLeaderboardOpen(true); }}
+								className="challenge-btn"
+								onClick={submitRgScore}
+								disabled={submittedRef.current || rgBest <= 0}
 							>
-								Leaderboard
+								{submittedRef.current ? "Submitted" : "Submit Score"}
 							</button>
 						</div>
 					</div>
@@ -885,51 +978,24 @@ export function Game(): JSX.Element {
 						{hovered.name}
 					</div>
 				)}
+				{(isChallenge || isRgChallenge) && leaderboardEntries.length > 0 && (
+					<div className="leaderboard-panel">
+						<div className="lb-panel-title">All-Time Top 10</div>
+						<table className="lb-panel-table">
+							<tbody>
+								{leaderboardEntries.slice(0, 10).map((e) => (
+									<tr key={e.rank} className={e.name === identity.name ? "lb-panel-me" : ""}>
+										<td className="lb-panel-rank">#{e.rank}</td>
+										<td className="lb-panel-name">{e.name}</td>
+										<td className="lb-panel-value">{e.value}</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				)}
 				{status === "ready" && <div className="fps-readout">{fps} fps</div>}
 			</div>
-
-			{leaderboardOpen && (
-				<div className="modal-backdrop" onClick={() => setLeaderboardOpen(false)}>
-					<div className="modal-box challenge-leaderboard" onClick={(e) => e.stopPropagation()}>
-						<div className="modal-header">
-							<h2 className="modal-title">Daily Leaderboard</h2>
-							<button
-								type="button"
-								className="modal-close"
-								onClick={() => setLeaderboardOpen(false)}
-							>
-								&times;
-							</button>
-						</div>
-						<div className="modal-body">
-							{leaderboardLoading ? (
-								<div className="text-sm text-zinc-400">Loading…</div>
-							) : leaderboardEntries.length === 0 ? (
-								<div className="text-sm text-zinc-400">No scores today yet.</div>
-							) : (
-								<table className="leaderboard-table">
-									<thead>
-										<tr>
-											<th>#</th>
-											<th>Name</th>
-											<th>Speed</th>
-										</tr>
-									</thead>
-									<tbody>
-										{leaderboardEntries.map((e) => (
-											<tr key={e.rank}>
-												<td className="lb-rank">{e.rank}</td>
-												<td className="lb-name">{e.name}</td>
-												<td className="lb-speed">{e.maxSpeed}</td>
-											</tr>
-										))}
-									</tbody>
-								</table>
-							)}
-						</div>
-					</div>
-				</div>
-			)}
 
 			{status === "loading" && <div className="game-status">Loading game…</div>}
 			{status === "error" && (

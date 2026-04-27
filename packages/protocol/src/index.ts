@@ -9,7 +9,7 @@ export const PROTOCOL_VERSION = 5;
 
 export type RGB = readonly [r: number, g: number, b: number];
 
-export type GameMode = "standard" | "grapple_challenge";
+export type GameMode = "standard" | "grapple_challenge" | "rg_challenge";
 
 // ──────────────────────────────────────────────────────────────────────
 // Phase 0 — connection liveness
@@ -111,6 +111,7 @@ export type PublicRoomSummary = {
 	playerCount: number;
 	maxPlayers: number;
 	started: boolean;
+	permanent: boolean;
 };
 
 export type PublicRoomsList = {
@@ -229,6 +230,31 @@ export type Leaderboard = {
 	entries: LeaderboardEntry[];
 };
 
+// -- RG Challenge leaderboard messages --
+
+export type SubmitRgScore = {
+	type: "submit_rg_score";
+	maxStreak: number; // best consecutive RGs this session
+};
+
+export type RgScoreAck = {
+	type: "rg_score_ack";
+	rank: number;
+	dailyBest: number; // this player's best streak today
+};
+
+export type RgLeaderboardRow = {
+	rank: number;
+	name: string;
+	maxStreak: number;
+};
+
+export type RgLeaderboard = {
+	type: "rg_leaderboard";
+	date: string;
+	entries: RgLeaderboardRow[];
+};
+
 // ──────────────────────────────────────────────────────────────────────
 // Unions
 // ──────────────────────────────────────────────────────────────────────
@@ -247,7 +273,8 @@ export type ClientMsg =
 	| SetRoomVisibility
 	| SubscribePublicRooms
 	| UnsubscribePublicRooms
-	| SubmitScore;
+	| SubmitScore
+	| SubmitRgScore;
 
 // Sent once per connection right after WS open so the client knows its
 // server-assigned id (used to recognise itself in subsequent room_state
@@ -282,4 +309,6 @@ export type ServerMsg =
 	| PublicRoomsList
 	| ErrorMsg
 	| ScoreAck
-	| Leaderboard;
+	| Leaderboard
+	| RgScoreAck
+	| RgLeaderboard;

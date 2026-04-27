@@ -4,6 +4,7 @@ import { useApp } from "../state/AppState";
 import { hexToRgb, rgbToCss, rgbToHex } from "./color";
 import { MAPS } from "./maps";
 import { ControlsModal } from "./ControlsModal";
+import { ChallengeLeaderboardCard } from "./ChallengeLeaderboardCard";
 import { TrailMenu } from "./TrailMenu";
 import type { GameMode } from "@sr-web/protocol";
 
@@ -23,6 +24,8 @@ export function Home(): JSX.Element {
 	const navigate = useNavigate();
 
 	const [mode, setMode] = useState<GameMode>("standard");
+	const [modeCategory, setModeCategory] = useState<"default" | "challenge">("default");
+	const [challengeType, setChallengeType] = useState<"grapple_challenge" | "rg_challenge">("grapple_challenge");
 	const [mapId, setMapId] = useState<string>(MAPS[0]?.id ?? "");
 	const [joinCode, setJoinCode] = useState<string>("");
 	const [controlsOpen, setControlsOpen] = useState(false);
@@ -65,7 +68,10 @@ export function Home(): JSX.Element {
 		if (!canSubmit) return;
 		if (mode === "standard" && !mapId) return;
 		clearError();
-		const actualMapId = mode === "grapple_challenge" ? "grapple_challenge" : mapId;
+		const actualMapId =
+			mode === "grapple_challenge" ? "grapple_challenge" :
+			mode === "rg_challenge" ? "rg_challenge" :
+			mapId;
 		ws.send({
 			type: "create_room",
 			name: identity.name.trim(),
@@ -232,7 +238,7 @@ export function Home(): JSX.Element {
 						<ul className="flex list-none flex-col gap-2 p-0">
 							{filteredPublic.map((r) => {
 								const map = MAPS.find((m) => m.id === r.mapId);
-								const isChallenge = r.mode === "grapple_challenge";
+								const isChallenge = r.mode === "grapple_challenge" || r.mode === "rg_challenge";
 								const unlimited = r.maxPlayers === -1;
 								const full = !unlimited && r.playerCount >= r.maxPlayers;
 								const fillPct = unlimited
@@ -254,23 +260,27 @@ export function Home(): JSX.Element {
 												{r.displayName}
 											</div>
 											<div className="mt-1 flex flex-wrap items-center gap-1.5">
-												{isChallenge ? (
-													<span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-300">
-														Grapple Challenge
-													</span>
-												) : (
-													<span className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-400">
-														{map?.displayName ?? r.mapId}
-													</span>
-												)}
-												<span className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 font-mono text-[11px] text-zinc-400">
-													{r.code}
+{isChallenge ? (
+												<span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-300">
+													{r.mode === "rg_challenge" ? "RG Challenge" : "Speed Challenge"}
 												</span>
-												{r.started && (
-													<span className="rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-amber-200/70">
-														In game
-													</span>
-												)}
+											) : (
+												<span className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-400">
+													{map?.displayName ?? r.mapId}
+												</span>
+											)}
+											<span className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 font-mono text-[11px] text-zinc-400">
+												{r.code}
+											</span>
+											{r.permanent ? (
+												<span className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[11px] text-violet-300">
+													Eternal
+												</span>
+											) : r.started ? (
+												<span className="rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-amber-200/70">
+													In game
+												</span>
+											) : null}
 											</div>
 										</div>
 										<div className="hidden w-32 sm:block">
@@ -320,28 +330,34 @@ export function Home(): JSX.Element {
 									<button
 										type="button"
 										role="radio"
-										aria-checked={mode === "standard"}
-										onClick={() => setMode("standard")}
+										aria-checked={modeCategory === "default"}
+										onClick={() => {
+											setModeCategory("default");
+											setMode("standard");
+										}}
 										className={`flex flex-1 items-center justify-center rounded-none border-0 px-3 text-xs font-medium transition ${
-											mode === "standard"
+											modeCategory === "default"
 												? "bg-zinc-800 text-zinc-100"
 												: "bg-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
 										}`}
 									>
-										Standard
+										Default
 									</button>
 									<button
 										type="button"
 										role="radio"
-										aria-checked={mode === "grapple_challenge"}
-										onClick={() => setMode("grapple_challenge")}
+										aria-checked={modeCategory === "challenge"}
+										onClick={() => {
+											setModeCategory("challenge");
+											setMode(challengeType);
+										}}
 										className={`flex flex-1 items-center justify-center rounded-none border-0 border-l border-l-zinc-800 px-3 text-xs font-medium transition ${
-											mode === "grapple_challenge"
+											modeCategory === "challenge"
 												? "bg-emerald-500/20 text-emerald-300"
 												: "bg-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
 										}`}
 									>
-										Grapple Challenge
+										Challenge
 									</button>
 								</div>
 							</div>
@@ -359,23 +375,35 @@ export function Home(): JSX.Element {
 							</label>
 
 							<label className="flex flex-col gap-1.5">
-								<span className="text-xs font-medium text-zinc-400">Map</span>
-								<select
-									value={mode === "grapple_challenge" ? "grapple_challenge" : mapId}
-									disabled={mode === "grapple_challenge"}
-									onChange={(e) => setMapId(e.target.value)}
-									className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none focus:border-zinc-600 disabled:cursor-default disabled:text-emerald-300 disabled:opacity-100"
-								>
-									{mode === "grapple_challenge" ? (
-										<option value="grapple_challenge">Grapple Challenge</option>
-									) : (
-										MAPS.map((m) => (
+								<span className="text-xs font-medium text-zinc-400">
+									{modeCategory === "challenge" ? "Challenge" : "Map"}
+								</span>
+								{modeCategory === "challenge" ? (
+									<select
+										value={challengeType}
+										onChange={(e) => {
+											const ct = e.target.value as "grapple_challenge" | "rg_challenge";
+											setChallengeType(ct);
+											setMode(ct);
+										}}
+										className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-emerald-300 outline-none focus:border-zinc-600"
+									>
+										<option value="grapple_challenge">Speed Challenge</option>
+										<option value="rg_challenge">RG Challenge</option>
+									</select>
+								) : (
+									<select
+										value={mapId}
+										onChange={(e) => setMapId(e.target.value)}
+										className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none focus:border-zinc-600"
+									>
+										{MAPS.map((m) => (
 											<option key={m.id} value={m.id}>
 												{m.displayName}
 											</option>
-										))
-									)}
-								</select>
+										))}
+									</select>
+								)}
 							</label>
 
 							<div className="grid grid-cols-2 gap-3">
@@ -482,6 +510,8 @@ export function Home(): JSX.Element {
 					</form>
 				</aside>
 			</div>
+
+			<ChallengeLeaderboardCard />
 
 			<ControlsModal open={controlsOpen} onClose={() => setControlsOpen(false)} />
 		</main>

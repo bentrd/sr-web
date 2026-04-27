@@ -143,7 +143,7 @@ export function Room(): JSX.Element {
 				</div>
 				<div className="room-map">
 					<div className="room-code-label">Map</div>
-					<div>{room.mode === "grapple_challenge" ? "Grapple Challenge" : (map?.displayName ?? room.mapId)}</div>
+					<div>{room.mode === "grapple_challenge" ? "Speed Challenge" : (map?.displayName ?? room.mapId)}</div>
 				</div>
 				<div className="room-map">
 					<div className="room-code-label">Capacity</div>

@@ -4,9 +4,13 @@ import { RoomStore, playerInfo, type WsData } from "./rooms";
 import { normaliseCode } from "./codes";
 import {
 	submitScore,
-	getDailyLeaderboard,
-	dailyBestForPlayer,
-	rankForPlayer,
+	getAllTimeLeaderboard,
+	allTimeBestForPlayer,
+	allTimeRankForPlayer,
+	submitRgScore,
+	getRgAllTimeLeaderboard,
+	rgAllTimeBestForPlayer,
+	rgAllTimeRankForPlayer,
 } from "./leaderboard";
 
 const PORT = Number(process.env.PORT ?? 4000);
@@ -32,6 +36,22 @@ const SCORE_SUBMIT_COOLDOWN_MS = 10_000;
 const SCORE_MAX_SPEED_CAP = 100_000;
 
 const store = new RoomStore();
+
+// ── Permanent challenge rooms ───────────────────────────────────────────
+// These survive server restarts and appear in the public room list so
+// anyone can jump into a challenge without creating a room first.
+store.createPermanentRoom("SPEED", "grapple_challenge", {
+	displayName: "Speed Challenge",
+	maxPlayers: -1,
+	isPublic: true,
+	mode: "grapple_challenge",
+});
+store.createPermanentRoom("RGCH1", "rg_challenge", {
+	displayName: "RG Challenge",
+	maxPlayers: -1,
+	isPublic: true,
+	mode: "rg_challenge",
+});
 
 // Rate-limit: playerId → last submit timestamp
 const scoreCooldowns = new Map<string, number>();
@@ -78,7 +98,7 @@ function validColor(c: unknown): c is RGB {
 }
 
 function validMode(m: unknown): m is GameMode {
-	return m === "standard" || m === "grapple_challenge";
+	return m === "standard" || m === "grapple_challenge" || m === "rg_challenge";
 }
 
 function todayDate(): string {
@@ -102,10 +122,9 @@ const server = Bun.serve<WsData, never>({
 		if (url.pathname === "/health") return corsResponse("ok");
 
 		if (url.pathname === "/leaderboard" && req.method === "GET") {
-			const date = url.searchParams.get("date") ?? todayDate();
-			const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 20)));
+			const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 10)));
 			try {
-				const entries = getDailyLeaderboard(date, limit);
+				const entries = getAllTimeLeaderboard(limit);
 				return corsResponse(JSON.stringify(entries), {
 					headers: { "content-type": "application/json", "cache-control": "public, max-age=30" },
 				});
@@ -115,6 +134,15 @@ const server = Bun.serve<WsData, never>({
 					headers: { "content-type": "application/json" },
 				});
 			}
+		}
+
+		if (url.pathname === "/rg-leaderboard" && req.method === "GET") {
+			const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 10)));
+			const entries = getRgAllTimeLeaderboard(limit);
+			return corsResponse(JSON.stringify(entries), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
 		}
 
 		if (req.method === "OPTIONS") {
@@ -240,6 +268,11 @@ const server = Bun.serve<WsData, never>({
 					ws.data.roomCode = result.code;
 					// Tell everyone in the room (including the new joiner) the new state.
 					store.broadcast(result, store.roomStateMsg(result));
+					// Permanent rooms auto-start when someone joins — broadcast explicitly.
+					if (result.permanent && !result.started) {
+						store.broadcast(result, { type: "game_started" });
+						chatSystem(result.code, "Game started");
+					}
 					if (!wasMember) {
 						store.broadcast(result, {
 							type: "player_joined",
@@ -480,15 +513,44 @@ const server = Bun.serve<WsData, never>({
 					}
 					scoreCooldowns.set(ws.data.playerId, now);
 
-					const date = todayDate();
-					submitScore(date, me.name, Math.round(msg.maxSpeed));
-					const rank = rankForPlayer(date, me.name);
-					const dailyBest = dailyBestForPlayer(date, me.name);
+					submitScore(todayDate(), me.name, Math.round(msg.maxSpeed));
+					const rank = allTimeRankForPlayer(me.name);
+					const dailyBest = allTimeBestForPlayer(me.name);
 					return send(ws, {
 						type: "score_ack",
 						rank,
 						dailyBest,
 					});
+				}
+
+				case "submit_rg_score": {
+					if (!ws.data.roomCode) return;
+					const room = store.getRoom(ws.data.roomCode);
+					if (!room || room.mode !== "rg_challenge") return;
+					const streak = (msg as { maxStreak: number }).maxStreak;
+					if (typeof streak !== "number" || !Number.isFinite(streak) || streak <= 0 || streak > 99999) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "maxStreak must be a positive integer",
+						});
+					}
+					const me = room.players.get(ws.data.playerId);
+					if (!me) return;
+					const lastSubmit = scoreCooldowns.get(ws.data.playerId) ?? 0;
+					const now = Date.now();
+					if (now - lastSubmit < SCORE_SUBMIT_COOLDOWN_MS) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: `submit too fast — wait ${SCORE_SUBMIT_COOLDOWN_MS}ms`,
+						});
+					}
+					scoreCooldowns.set(ws.data.playerId, now);
+					submitRgScore(todayDate(), me.name, Math.round(streak));
+					const rank = rgAllTimeRankForPlayer(me.name);
+					const dailyBest = rgAllTimeBestForPlayer(me.name);
+					return send(ws, { type: "rg_score_ack", rank, dailyBest });
 				}
 
 				default:

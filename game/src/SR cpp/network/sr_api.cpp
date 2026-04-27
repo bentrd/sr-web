@@ -94,7 +94,7 @@ extern "C"
 		g_inst->m_playground.m_ghosts.clear();
 	}
 
-	// Load the procedural "Grapple Challenge" corridor instead of a
+	// Load the procedural "Speed Challenge" corridor instead of a
 	// .sr map file. 100K-tile-wide corridor, 20-tile air gap with
 	// grapple-able ceiling, no speed cap.
 	void sr_load_challenge()
@@ -102,6 +102,51 @@ extern "C"
 		if (g_inst == nullptr) return;
 		g_inst->m_playground.load_challenge();
 		g_inst->m_playground.m_ghosts.clear();
+	}
+
+	void sr_load_rg_challenge()
+	{
+		if (g_inst == nullptr) return;
+		g_inst->m_playground.load_rg_challenge();
+		g_inst->m_playground.m_ghosts.clear();
+	}
+
+	float sr_get_rg_consecutive()
+	{
+		if (g_inst == nullptr) return 0.0f;
+		return static_cast<float>(g_inst->m_playground.m_rg_state.consecutive);
+	}
+
+	float sr_get_rg_best()
+	{
+		if (g_inst == nullptr) return 0.0f;
+		return static_cast<float>(g_inst->m_playground.m_rg_state.session_best);
+	}
+
+	void sr_reset_rg_challenge()
+	{
+		if (g_inst == nullptr) return;
+		auto& pg = g_inst->m_playground;
+		emu::player* p = pg.m_player;
+		if (p != nullptr)
+		{
+			if (p->d.is_grappling && p->m_grapple != nullptr)
+				p->cancel_grapple();
+		}
+		pg.reset_rg_state();
+		pg.reset();
+		// Also reset any residual physics from the old run.
+		if (p != nullptr)
+		{
+			p->d.boost = 0.0f;
+			p->d.boost_cooldown = 0.0f;
+			p->d.super_boost_force = emu::vec_zero;
+			p->d.super_boost_direction = emu::vec_zero;
+			p->update_hitboxes();
+		}
+		pg.m_camera.position = (p != nullptr && p->m_actor != nullptr)
+			? p->m_actor->d.position - pg.m_camera.viewport_size / 2.0f
+			: emu::vec_zero;
 	}
 
 	// Returns the peak velocity magnitude recorded this session

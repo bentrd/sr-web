@@ -6,6 +6,7 @@
 #include "emulation/state.h"
 #include "emulation/input.h"
 #include "drawing/camera.h"
+#include "emulation/game_mode.h"
 #include "input_handler.h"
 #include "utility/event.h"
 #include "utility/level_preprocessing.h"
@@ -39,6 +40,14 @@ struct playground
 	net::local_identity m_local_identity;
 	net::ghost_manager m_ghosts;
 
+	// Which game mode is active. Set by load*() / sr_load_* functions.
+	emu::GameMode m_game_mode = emu::GameMode::standard;
+
+	// Mode-specific state.
+	// - grapple_challenge: m_session_max_speed
+	// - rg_challenge:      m_rg_state
+	emu::RgChallengeState m_rg_state;
+
 	// Peak velocity magnitude (wu/s) recorded this session. Reset by
 	// reset() and never clamped — the display side rounds to int.
 	float m_session_max_speed = 0.0f;
@@ -48,6 +57,10 @@ struct playground
 	void init();
 	void load(const std::string& map_path);
 	void load_challenge();
+	// Load the same procedural corridor as load_challenge() but in RG mode.
+	void load_rg_challenge();
+	// Reset RG Challenge streak and detection state.
+	void reset_rg_state();
 	void reset();
 
 	void update_input(const inputs& inputs);

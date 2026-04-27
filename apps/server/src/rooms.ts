@@ -38,6 +38,7 @@ type Room = {
 	displayName: string;
 	maxPlayers: number; // -1 = unlimited
 	isPublic: boolean;
+	permanent: boolean; // never GC'd, auto-recreated on startup
 };
 
 const DISCONNECT_GRACE_MS = 30_000;
@@ -71,10 +72,36 @@ export class RoomStore {
 			displayName: opts.displayName,
 			maxPlayers: opts.maxPlayers,
 			isPublic: opts.isPublic,
+			permanent: false,
 		};
 		// Single-player room — name is trivially unique.
 		this.rooms.set(code, room);
 		if (room.isPublic) this.broadcastPublicList();
+		return room;
+	}
+
+	// Create a permanent room with a fixed code. Permanent rooms are never
+	// GC'd and reappear after server restart. The code must be exactly 5
+	// Crockford base32 characters (the alphabet in codes.ts).
+	createPermanentRoom(code: string, mapId: string, opts: CreateRoomOptions): Room {
+		const now = Date.now();
+		const room: Room = {
+			code,
+			mapId,
+			mode: opts.mode,
+			hostId: "server", // no real host — first joiner can start
+			players: new Map(),
+			started: false,
+			createdAt: now,
+			lastActivityAt: now,
+			displayName: opts.displayName,
+			maxPlayers: opts.maxPlayers,
+			isPublic: opts.isPublic,
+			permanent: true,
+		};
+		this.rooms.set(code, room);
+		if (room.isPublic) this.broadcastPublicList();
+		console.log(`[rooms] permanent room ${code} (${opts.mode})`);
 		return room;
 	}
 
@@ -118,6 +145,10 @@ export class RoomStore {
 		this.cancelEvict(player.id);
 		room.players.set(player.id, player);
 		room.lastActivityAt = Date.now();
+		// Auto-start permanent challenge rooms as soon as anyone joins.
+		if (room.permanent && !room.started) {
+			room.started = true;
+		}
 		if (room.isPublic) this.broadcastPublicList();
 		return room;
 	}
@@ -174,14 +205,14 @@ export class RoomStore {
 	}
 
 	private maybeDeleteEmptyRoom(room: Room): void {
-		if (room.players.size === 0) this.rooms.delete(room.code);
+		if (room.players.size === 0 && !room.permanent) this.rooms.delete(room.code);
 	}
 
 	private gcIdleRooms(): void {
 		const now = Date.now();
 		let publicChanged = false;
 		for (const [code, room] of this.rooms) {
-			if (now - room.lastActivityAt > IDLE_ROOM_GC_MS) {
+			if (!room.permanent && now - room.lastActivityAt > IDLE_ROOM_GC_MS) {
 				console.log(`[rooms] gc idle room ${code}`);
 				this.rooms.delete(code);
 				if (room.isPublic) publicChanged = true;
@@ -268,6 +299,7 @@ export class RoomStore {
 			playerCount: number;
 			maxPlayers: number;
 			started: boolean;
+			permanent: boolean;
 		}>;
 		for (const room of this.rooms.values()) {
 			if (!room.isPublic) continue;
@@ -279,6 +311,7 @@ export class RoomStore {
 				playerCount: room.players.size,
 				maxPlayers: room.maxPlayers,
 				started: room.started,
+				permanent: room.permanent,
 			});
 		}
 		return out;
