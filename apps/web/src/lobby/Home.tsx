@@ -132,7 +132,7 @@ export function Home(): JSX.Element {
 			<header className="flex flex-wrap items-center justify-between gap-4">
 				<div className="flex h-12 items-center gap-3">
 					<img
-						src="/logo.png"
+						src={`${import.meta.env.BASE_URL}logo.png`}
 						alt="SR-Web"
 						className="size-12 rounded-xl object-cover"
 					/>
