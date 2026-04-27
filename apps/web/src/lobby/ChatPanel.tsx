@@ -58,6 +58,40 @@ export function ChatPanel({ variant = "lobby" }: ChatPanelProps): JSX.Element {
 	const listRef = useRef<HTMLDivElement | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
 
+	const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+	const dragState = useRef<{ startX: number; startY: number; offsetX: number; offsetY: number } | null>(null);
+
+	const onHeaderMouseDown = (e: React.MouseEvent): void => {
+		// Only left button
+		if (e.button !== 0) return;
+		e.preventDefault();
+		dragState.current = {
+			startX: e.clientX,
+			startY: e.clientY,
+			offsetX: dragOffset.x,
+			offsetY: dragOffset.y,
+		};
+		const onMove = (ev: MouseEvent): void => {
+			if (!dragState.current) return;
+			setDragOffset({
+				x: dragState.current.offsetX + (ev.clientX - dragState.current.startX),
+				y: dragState.current.offsetY + (ev.clientY - dragState.current.startY),
+			});
+		};
+		const onUp = (): void => {
+			dragState.current = null;
+			window.removeEventListener("mousemove", onMove);
+			window.removeEventListener("mouseup", onUp);
+		};
+		window.addEventListener("mousemove", onMove);
+		window.addEventListener("mouseup", onUp);
+	};
+
+	const onHeaderDoubleClick = (): void => {
+		// Double-click header to reset position
+		setDragOffset({ x: 0, y: 0 });
+	};
+
 	// Listen for local error events (slash command failures).
 	useEffect(() => {
 		const handler = (e: Event): void => {
@@ -69,11 +103,16 @@ export function ChatPanel({ variant = "lobby" }: ChatPanelProps): JSX.Element {
 		return () => window.removeEventListener("sr-chat-local", handler);
 	}, []);
 
-	// Stick to the bottom whenever a new message arrives.
+	// Stick to the bottom whenever a new message arrives or chat is re-expanded.
 	useEffect(() => {
 		const el = listRef.current;
-		if (el) el.scrollTop = el.scrollHeight;
-	}, [chat]);
+		if (!el || collapsed) return;
+		// Use requestAnimationFrame so the browser has laid out the element
+		// after display:none → display:block transition.
+		requestAnimationFrame(() => {
+			el.scrollTop = el.scrollHeight;
+		});
+	}, [chat, collapsed]);
 
 	// Listen for the user-bound chat key (default Enter). When pressed
 	// while focus is anywhere except the chat input, we steal focus AND
@@ -185,8 +224,17 @@ export function ChatPanel({ variant = "lobby" }: ChatPanelProps): JSX.Element {
 
 	return (
 		<>
-			<aside className={`chat chat-${variant} ${collapsed ? "chat-collapsed" : ""}`}>
-				<header className="chat-header">
+			<aside
+				className={`chat chat-${variant} ${collapsed ? "chat-collapsed" : ""}`}
+				style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}
+			>
+				<header
+					className="chat-header"
+					onMouseDown={onHeaderMouseDown}
+					onDoubleClick={onHeaderDoubleClick}
+					style={{ cursor: "grab", userSelect: "none" }}
+					title="Drag to move · Double-click to reset"
+				>
 					<span>Chat</span>
 					<button
 						type="button"
@@ -197,73 +245,71 @@ export function ChatPanel({ variant = "lobby" }: ChatPanelProps): JSX.Element {
 						{collapsed ? "▲" : "▼"}
 					</button>
 				</header>
-				{!collapsed && (
-					<>
-						<div className="chat-list" ref={listRef}>
-							{chat.length === 0 && localMsgs.length === 0 ? (
-								<p className="chat-empty">No messages yet.</p>
-							) : (
-								<>
-									{chat.map((m, i) => (
-										<div
-											key={`${m.ts}-${i}`}
-											className={`chat-msg chat-${m.kind}`}
-										>
-											{m.kind === "user" ? (
-												<>
-													<span
-														className="chat-name"
-														style={{ color: rgbToCss(m.color) }}
-													>
-														{m.name}
-													</span>
-													<span className="chat-text">{m.text}</span>
-												</>
-											) : (
-												<span className="chat-system-text">— {m.text} —</span>
-											)}
-										</div>
-									))}
-									{localMsgs.map((m, i) => (
-										<div key={`local-${i}`} className="chat-msg chat-local">
-											<span className="chat-system-text">! {m}</span>
-										</div>
-									))}
-								</>
-							)}
+				<div style={{ display: collapsed ? "none" : undefined }}>
+					<div className="chat-list" ref={listRef}>
+						{chat.length === 0 && localMsgs.length === 0 ? (
+							<p className="chat-empty">No messages yet.</p>
+						) : (
+							<>
+								{chat.map((m, i) => (
+									<div
+										key={`${m.ts}-${i}`}
+										className={`chat-msg chat-${m.kind}`}
+									>
+										{m.kind === "user" ? (
+											<>
+												<span
+													className="chat-name"
+													style={{ color: rgbToCss(m.color) }}
+												>
+													{m.name}
+												</span>
+												<span className="chat-text">{m.text}</span>
+											</>
+										) : (
+											<span className="chat-system-text">— {m.text} —</span>
+										)}
+									</div>
+								))}
+								{localMsgs.map((m, i) => (
+									<div key={`local-${i}`} className="chat-msg chat-local">
+										<span className="chat-system-text">! {m}</span>
+									</div>
+								))}
+							</>
+						)}
+					</div>
+					<form className="chat-form" onSubmit={onSubmit}>
+						<div className="chat-input-row">
+							<button
+								type="button"
+								className="chat-cmd-btn"
+								title="Commands (/)"
+								aria-label="Open command palette"
+								onClick={() => {
+									setPaletteOpen(true);
+									inputRef.current?.blur();
+								}}
+							>
+								/
+							</button>
+							<input
+								ref={inputRef}
+								type="text"
+								className="chat-input"
+								value={draft}
+								onChange={(e) => setDraft(e.target.value)}
+								placeholder={`Say something or /tp… (${bindings.chat.label})`}
+								maxLength={240}
+								onKeyDown={(e) => {
+									// Don't let game keys leak when typing in chat.
+									e.stopPropagation();
+									if (e.key === "Escape") (e.target as HTMLInputElement).blur();
+								}}
+							/>
 						</div>
-						<form className="chat-form" onSubmit={onSubmit}>
-							<div className="chat-input-row">
-								<button
-									type="button"
-									className="chat-cmd-btn"
-									title="Commands (/)"
-									aria-label="Open command palette"
-									onClick={() => {
-										setPaletteOpen(true);
-										inputRef.current?.blur();
-									}}
-								>
-									/
-								</button>
-								<input
-									ref={inputRef}
-									type="text"
-									className="chat-input"
-									value={draft}
-									onChange={(e) => setDraft(e.target.value)}
-									placeholder={`Say something or /tp… (${bindings.chat.label})`}
-									maxLength={240}
-									onKeyDown={(e) => {
-										// Don't let game keys leak when typing in chat.
-										e.stopPropagation();
-										if (e.key === "Escape") (e.target as HTMLInputElement).blur();
-									}}
-								/>
-							</div>
-						</form>
-					</>
-				)}
+					</form>
+				</div>
 			</aside>
 			<CommandPalette
 				open={paletteOpen}
