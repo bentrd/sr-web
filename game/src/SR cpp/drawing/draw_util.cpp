@@ -475,10 +475,13 @@ draw_facing_indicator(0.0f, 0.0f, 0.0f, 0.2f,
 		static_cast<int8_t>(player->d.move_direction));
 	}
 
-	vector top_left = { (camera.viewport_size.x - 200.0f) / 2, 15.0f };
+	if (draw::visuals().show_boost_bar)
+	{
+		vector top_left = { (camera.viewport_size.x - 200.0f) / 2, 15.0f };
 
-	draw::draw_rectangle(0.7f, 0.7f, 0.7f, top_left, top_left + vector{ 200.0f, 25.0f });
-	draw::draw_rectangle(0.0f, 0.0f, 1.0f, top_left, top_left + vector{ 200.0f * player->d.boost / 2.0f, 25.0f });
+		draw::draw_rectangle(0.7f, 0.7f, 0.7f, top_left, top_left + vector{ 200.0f, 25.0f });
+		draw::draw_rectangle(0.0f, 0.0f, 1.0f, top_left, top_left + vector{ 200.0f * player->d.boost / 2.0f, 25.0f });
+	}
 }
 
 void draw::draw_grapple(grapple* grapple, const camera& camera)

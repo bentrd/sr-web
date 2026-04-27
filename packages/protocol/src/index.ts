@@ -5,7 +5,7 @@
 // change, update both this file AND the C++ sr_get_local_snapshot /
 // sr_push_ghost signatures in the same commit.
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export type RGB = readonly [r: number, g: number, b: number];
 
@@ -212,6 +212,26 @@ export type SubmitScore = {
 	maxSpeed: number; // in wu/s, validated server-side (0 < x < 100000)
 };
 
+// Submitted on a floor-touch-after-airborne event when the run beats the
+// player's known PR. Recording is continuous from level-load: the input
+// stream covers the entire session up to (and including) the moment the
+// PR was scored, so the server can deterministically replay the run from
+// a fresh state{level} and verify the claimed max_speed. Subsequent PRs
+// in the same session resubmit a strictly-longer log — the client doesn't
+// reset the recorder, so the server's replay always anchors at level-load.
+export type SubmitRun = {
+	type: "submit_run";
+	claimedMaxSpeed: number; // wu/s (0 < x < 100000)
+	durationTicks: number;   // sim ticks the run lasted (300 ticks/sec)
+	simVersion: number;      // bumps when physics/input mapping change
+	// Base64-encoded input log:
+	//   [varint tickDelta][uint8 bitmask] [varint tickDelta][uint8 bitmask] ...
+	// First entry has tickDelta=0 and seeds the initial input state.
+	// Bitmask layout: bit 0=left, 1=right, 2=jump, 3=grapple, 4=slide,
+	// 5=boost, 6=item, 7=swap. Capped at 256 KB raw (~341 KB base64).
+	inputs: string;
+};
+
 export type ScoreAck = {
 	type: "score_ack";
 	rank: number;     // position on today's leaderboard (1-based)
@@ -222,6 +242,10 @@ export type LeaderboardEntry = {
 	rank: number;
 	name: string;
 	maxSpeed: number;
+	// Best matching run id for hover-to-replay. null when no recorded
+	// run exists for this entry (legacy scores submitted before the
+	// runs table was introduced).
+	runId?: number | null;
 };
 
 export type Leaderboard = {
@@ -237,6 +261,18 @@ export type SubmitRgScore = {
 	maxStreak: number; // best consecutive RGs this session
 };
 
+// RG-mode counterpart to SubmitRun. Sent on streak-break-PR, carrying
+// the input log from level-load up to the snapshot point so the server
+// can replay the run, count RGs deterministically, and verify the
+// claimed max_streak.
+export type SubmitRgRun = {
+	type: "submit_rg_run";
+	claimedMaxStreak: number; // integer (1..99999)
+	durationTicks: number;    // sim ticks since recording started
+	simVersion: number;
+	inputs: string;           // base64-encoded log (same wire format)
+};
+
 export type RgScoreAck = {
 	type: "rg_score_ack";
 	rank: number;
@@ -247,6 +283,7 @@ export type RgLeaderboardRow = {
 	rank: number;
 	name: string;
 	maxStreak: number;
+	runId?: number | null;
 };
 
 export type RgLeaderboard = {
@@ -274,7 +311,9 @@ export type ClientMsg =
 	| SubscribePublicRooms
 	| UnsubscribePublicRooms
 	| SubmitScore
-	| SubmitRgScore;
+	| SubmitRun
+	| SubmitRgScore
+	| SubmitRgRun;
 
 // Sent once per connection right after WS open so the client knows its
 // server-assigned id (used to recognise itself in subsequent room_state

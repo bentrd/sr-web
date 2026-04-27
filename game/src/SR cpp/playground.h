@@ -1,7 +1,11 @@
 #ifndef PLAYGROUND_H
 #define PLAYGROUND_H
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "emulation/state.h"
 #include "emulation/input.h"
@@ -12,6 +16,101 @@
 #include "utility/level_preprocessing.h"
 #include "network/ghost_manager.h"
 #include "network/local_identity.h"
+
+// Records a continuous input log for server-side replay validation in
+// grapple_challenge mode. Recording starts at level-load (or manual reset)
+// and runs without interruption until the next reset (or 256 KB overflow).
+// On each floor-touch-after-airborne the `finished` flag is raised so JS
+// can sample the current state and submit if it's a new PR — the recorder
+// keeps running so subsequent attempts can also submit.
+//
+// Wire format:
+//   [varint tickDelta][uint8 bitmask] [varint tickDelta][uint8 bitmask] ...
+// The first entry has tickDelta=0 and carries the initial input state at
+// recording start. Subsequent entries are emitted whenever the input
+// bitmask changes. The server replays the deterministic sim from a freshly
+// constructed level-state with this stream and compares max_speed.
+struct run_recorder
+{
+	// Bumped whenever physics, input mapping, or mode parameters change in a
+	// way that would invalidate previously-recorded streams. Server rejects
+	// replays whose sim_version does not match the running server build.
+	static constexpr std::uint32_t k_sim_version = 1;
+	// Hard cap on log payload. ~4 hours of continuous play before reset is
+	// required, given empirically-measured ~0.06 bytes/tick at 300 Hz.
+	static constexpr std::size_t k_log_max_bytes = 256 * 1024;
+
+	// Monotonic sim-tick counter. Incremented on every sim step (1/300s),
+	// independent of wall clock. Used as the time base for log tick deltas.
+	std::uint64_t global_tick = 0;
+
+	// True while we're recording (always true in challenge mode unless the
+	// log has overflowed and is awaiting a reset).
+	bool active = false;
+	// True after a floor-touch-after-airborne event, until JS samples it.
+	// Cleared by JS-side consume call; recorder keeps running.
+	bool finished = false;
+	// Have we left the ground at least once since the recording started or
+	// the last `finished` event was raised? Gate for the next `finished`.
+	bool has_been_airborne = false;
+	// First sim tick of an active recording — seeds the log with the
+	// initial bitmask at delta=0 so the replay knows the starting state.
+	bool first_tick = true;
+
+	// Edge detection — last sim step's grounded state.
+	bool was_on_ground_prev = true;
+
+	// Recording-scoped state.
+	std::uint64_t start_tick = 0;       // global_tick when recording started
+	std::uint64_t end_tick = 0;         // most recent floor-touch tick
+	float max_speed = 0.0f;             // peak |velocity| across recording
+	std::uint8_t last_bitmask = 0;
+	std::uint64_t last_event_global_tick = 0;
+	std::vector<std::uint8_t> log;
+
+	// Drop the recording entirely (level load / manual reset / overflow).
+	void clear();
+
+	// Append an input change to the log: varint(global_tick - last_event_global_tick)
+	// followed by a single bitmask byte. Updates last_event_global_tick.
+	void append_event(std::uint8_t bitmask);
+};
+
+// Drives playback of a previously-recorded input log inside the browser
+// sim. Replaces the live keyboard / controller input read in
+// playground::update() while active, so the player's trajectory exactly
+// matches the recording (assuming the same starting state — challenge
+// modes regenerate the corridor + reset to PlayerStart on start_replay).
+struct replay_state
+{
+	bool is_active = false;
+	std::vector<std::uint8_t> log;
+	std::size_t log_pos = 0;
+	std::uint64_t tick = 0;             // current replay tick (0-based)
+	std::uint64_t duration_ticks = 0;   // stop after this many sim steps
+
+	// Peek of the next-pending event (not yet committed). Committed into
+	// current_bitmask in step() once `tick` reaches next_event_tick.
+	std::uint64_t next_event_tick = 0;
+	std::uint8_t next_event_bitmask = 0;
+	bool have_event = false;
+
+	// Bitmask driving the current sim step. Updated in step() as events
+	// commit. Constant between commits (i.e. inputs only "change" on the
+	// recorded ticks).
+	std::uint8_t current_bitmask = 0;
+
+	// Decode the next varint+byte from the log into next_event_tick /
+	// next_event_bitmask, advancing log_pos. Returns false on EOF or
+	// malformed varint (caller should mark have_event = false).
+	bool read_next_event(std::uint64_t base_tick);
+
+	// Drain all events scheduled for `tick` (updating current_bitmask)
+	// and return the bitmask that should drive the upcoming sim step.
+	std::uint8_t step();
+
+	void clear();
+};
 
 // Mutable so JS can rebind individual actions via sr_set_binding().
 // Defaults match the original SR-cpp scheme.
@@ -52,6 +151,16 @@ struct playground
 	// reset() and never clamped — the display side rounds to int.
 	float m_session_max_speed = 0.0f;
 
+	// Run recording for server-side replay anti-cheat. Only active in
+	// grapple_challenge mode. See run_recorder above for the wire format.
+	run_recorder m_run_recorder;
+
+	// Browser-side playback of a previously-recorded run. While active,
+	// the keyboard/controller input read is bypassed and the recorded
+	// bitmask drives the sim instead. Recording is paused while playing
+	// back so a replayed run can't itself be re-submitted as a PR.
+	replay_state m_replay;
+
 	// Per-frame controller input state pushed by JS via
 	// sr_push_controller_input(). Merged (OR'd) with keyboard state
 	// in update(). Reset at the end of tick_frame() so stale bits
@@ -76,6 +185,14 @@ struct playground
 	void update_input(const inputs& inputs);
 	void update(emu::timespan delta, const inputs& inputs, emu::vector viewport_size);
 	void draw(const inputs& inputs);
+
+	// Start playing back a recorded run. mode 0 = grapple_challenge,
+	// mode 1 = rg_challenge. Regenerates the corresponding procedural
+	// corridor, resets the player to PlayerStart, and arms the replay
+	// driver. Returns false on malformed log or unsupported mode.
+	bool start_replay(const std::uint8_t* log, std::size_t len,
+		std::uint64_t duration_ticks, int mode);
+	void stop_replay();
 };
 
 #endif

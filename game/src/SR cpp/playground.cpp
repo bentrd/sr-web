@@ -6,6 +6,7 @@
 #include "playground.h"
 #include "emulation/player.h"
 #include "emulation/tile_actor.h"
+#include "emulation/rg_detector.h"
 #include "drawing/draw_util.h"
 #include "drawing/trail.h"
 
@@ -20,6 +21,90 @@ std::array<int, emu::input_count> input_map
 	GLFW_KEY_E,           // item
 	GLFW_KEY_F            // swap item
 };
+
+void run_recorder::clear()
+{
+	active = false;
+	finished = false;
+	has_been_airborne = false;
+	first_tick = true;
+	start_tick = 0;
+	end_tick = 0;
+	max_speed = 0.0f;
+	last_bitmask = 0;
+	last_event_global_tick = 0;
+	log.clear();
+	// Note: was_on_ground_prev and global_tick are NOT reset — global_tick
+	// is monotonic across the session and was_on_ground_prev gets refreshed
+	// by the next update() before recording resumes.
+}
+
+void replay_state::clear()
+{
+	is_active = false;
+	log.clear();
+	log_pos = 0;
+	tick = 0;
+	duration_ticks = 0;
+	next_event_tick = 0;
+	next_event_bitmask = 0;
+	current_bitmask = 0;
+	have_event = false;
+}
+
+// Decode the next (varint delta, uint8 bitmask) from the log into
+// next_event_tick / next_event_bitmask. Returns false on EOF / malformed
+// varint — caller should clear have_event in that case.
+bool replay_state::read_next_event(std::uint64_t base_tick)
+{
+	std::uint64_t delta = 0;
+	std::size_t shift = 0;
+	while (log_pos < log.size())
+	{
+		const std::uint8_t b = log[log_pos++];
+		delta |= static_cast<std::uint64_t>(b & 0x7f) << shift;
+		if ((b & 0x80) == 0)
+		{
+			if (log_pos >= log.size()) return false; // missing bitmask byte
+			next_event_tick = base_tick + delta;
+			next_event_bitmask = log[log_pos++];
+			return true;
+		}
+		shift += 7;
+		if (shift >= 64) return false; // malformed varint
+	}
+	return false;
+}
+
+std::uint8_t replay_state::step()
+{
+	// Commit any events whose tick has arrived. The first call lands at
+	// tick=0 with next_event_tick=0 (the seed event), so the seed bitmask
+	// is committed before we drive the first sim step.
+	while (have_event && next_event_tick == tick)
+	{
+		current_bitmask = next_event_bitmask;
+		have_event = read_next_event(next_event_tick);
+	}
+	const std::uint8_t bm = current_bitmask;
+	tick++;
+	if (tick >= duration_ticks) is_active = false;
+	return bm;
+}
+
+void run_recorder::append_event(std::uint8_t bitmask)
+{
+	std::uint64_t delta = global_tick - last_event_global_tick;
+	last_event_global_tick = global_tick;
+	// LEB128 unsigned varint.
+	while (delta >= 0x80)
+	{
+		log.push_back(static_cast<std::uint8_t>((delta & 0x7f) | 0x80));
+		delta >>= 7;
+	}
+	log.push_back(static_cast<std::uint8_t>(delta));
+	log.push_back(bitmask);
+}
 
 playground::playground() = default;
 
@@ -37,6 +122,13 @@ void playground::load_challenge()
 	// Player spawns at X=200 tiles (3200 wu), centered in the air gap.
 	emu::level::generate_corridor(m_level, 100000, 50, 2, 23, 200);
 	m_session_max_speed = 0.0f;
+	m_run_recorder.clear();
+	m_run_recorder.was_on_ground_prev = true;
+	m_run_recorder.global_tick = 0;
+	// Continuous recording: arm immediately on level-load and keep going
+	// across multiple floor-touch events until reset / overflow.
+	m_run_recorder.active = true;
+	m_run_recorder.start_tick = 0;
 	m_game_mode = emu::GameMode::grapple_challenge;
 	init();
 	m_state.no_speed_cap = true;
@@ -47,6 +139,13 @@ void playground::load_rg_challenge()
 	// Same corridor as speed challenge — a long straight hallway with
 	// grapple-able ceiling. The challenge is chaining RGs, not raw speed.
 	emu::level::generate_corridor(m_level, 100000, 50, 2, 23, 200);
+	m_run_recorder.clear();
+	m_run_recorder.was_on_ground_prev = true;
+	m_run_recorder.global_tick = 0;
+	// Continuous recording: arm immediately so a streak-break-PR can
+	// snapshot the full session log for server-side replay validation.
+	m_run_recorder.active = true;
+	m_run_recorder.start_tick = 0;
 	m_game_mode = emu::GameMode::rg_challenge;
 	m_rg_state = emu::RgChallengeState{};
 	init();
@@ -75,6 +174,17 @@ void playground::init()
 void playground::reset()
 {
 	m_session_max_speed = 0.0f;
+	// Hard reset drops the recording. In challenge mode the recorder is
+	// re-armed immediately so the next attempt is captured from tick 0.
+	m_run_recorder.clear();
+	m_run_recorder.was_on_ground_prev = true;
+	m_run_recorder.global_tick = 0;
+	if (m_game_mode == emu::GameMode::grapple_challenge ||
+		m_game_mode == emu::GameMode::rg_challenge)
+	{
+		m_run_recorder.active = true;
+		m_run_recorder.start_tick = 0;
+	}
 	if (m_player != nullptr)
 	{
 		m_player->reset();
@@ -89,96 +199,148 @@ void playground::update_input(const inputs&)
 	// Pause toggle) was removed for the web build — this is play-only.
 }
 
+bool playground::start_replay(const std::uint8_t* log_data, std::size_t len,
+	std::uint64_t duration_ticks_in, int mode)
+{
+	if (log_data == nullptr || len < 2) return false;
+	if (duration_ticks_in == 0) return false;
+
+	// Lay down the same starting state the run was recorded against.
+	if (mode == 0)
+	{
+		load_challenge();
+	}
+	else if (mode == 1)
+	{
+		load_rg_challenge();
+	}
+	else
+	{
+		return false;
+	}
+
+	// load_*() rearmed the recorder; turn it off for the duration of
+	// playback so the replayed run can't be re-submitted as a PR.
+	m_run_recorder.clear();
+	m_run_recorder.active = false;
+
+	m_replay.clear();
+	m_replay.log.assign(log_data, log_data + len);
+	m_replay.duration_ticks = duration_ticks_in;
+	m_replay.tick = 0;
+	m_replay.log_pos = 0;
+	m_replay.have_event = m_replay.read_next_event(0);
+	if (!m_replay.have_event) return false;
+	m_replay.is_active = true;
+	return true;
+}
+
+void playground::stop_replay()
+{
+	m_replay.clear();
+}
+
 void playground::update(emu::timespan delta, const inputs& inputs, emu::vector viewport_size)
 {
-	for (size_t i = 0; i < m_state.m_inputs[0].size(); i++)
-		m_state.m_inputs[0][i] = inputs.held_keys[input_map[i]] || m_controller_inputs[i];
+	// Resolve per-action input state and capture the bitmask in a single
+	// pass — the bitmask is what drove this tick, recorded for replay.
+	// While playing back a recorded run we bypass the live keyboard /
+	// controller read entirely and feed the recorded bitmask into the sim
+	// instead. The recorder is paused for the duration of playback (set
+	// in start_replay) so a replayed run can't itself be re-submitted.
+	std::uint8_t input_bitmask = 0;
+	if (m_replay.is_active)
+	{
+		input_bitmask = m_replay.step();
+		for (size_t i = 0; i < m_state.m_inputs[0].size(); i++)
+		{
+			m_state.m_inputs[0][i] = ((input_bitmask >> i) & 1u) != 0;
+		}
+	}
+	else
+	{
+		for (size_t i = 0; i < m_state.m_inputs[0].size(); i++)
+		{
+			const bool pressed = inputs.held_keys[input_map[i]] || m_controller_inputs[i];
+			m_state.m_inputs[0][i] = pressed;
+			if (pressed) input_bitmask |= static_cast<std::uint8_t>(1u << i);
+		}
+	}
 
 	m_state.update(33333);
 
 	// --- RG Challenge detection ---
-	// Runs after the sim step so player state reflects the current frame.
-	// UPDATED: detection window is 3 frames (99999 ticks) instead of 2.
+	// Detection runs after the sim step so player flags + velocity reflect
+	// the current frame. The detector lives in emulation/rg_detector.cpp so
+	// the server-side replay binary can call it without pulling in any
+	// playground/drawing/network sources.
 	if (m_game_mode == emu::GameMode::rg_challenge && m_player != nullptr)
 	{
-		emu::player& p = *m_player;
-		const bool is_swinging = p.d.is_swinging;
-		const bool is_grappling = p.d.is_grappling;
-		const bool is_on_ground = p.d.is_on_ground;
-		const bool is_ceiling_hit = p.d.is_ceiling_hit;
-
-		// 3 sim frames at 300 Hz = 3 * 33333 = 99999 ticks.
-		constexpr uint64_t k_three_frame_ticks = 99999;
-
-		// 1) Detect grapple SHOT direction (only when hook is flying).
-		if (!m_rg_state.was_grappling_prev && is_grappling && !is_swinging)
-		{
-			// Grapple just fired — record direction.
-			if (p.m_grapple != nullptr)
-			{
-				m_rg_state.grapple_was_thrown_left =
-					p.m_grapple->d.direction.x < 0.0f;
-			}
-		}
-
-		// 2) Detect grapple CONNECT (transition into swinging).
-		if (!m_rg_state.was_swinging_prev && is_swinging)
-		{
-			m_rg_state.grapple_connect_time = m_state.m_time;
-		}
-
-		// 3) Detect FAILED RG — still swinging with a left grapple past 3 frames.
-		if (is_swinging && m_rg_state.grapple_was_thrown_left)
-		{
-			const uint64_t swinging_ticks =
-				(m_state.m_time - m_rg_state.grapple_connect_time).ticks;
-			if (swinging_ticks > k_three_frame_ticks)
-			{
-				m_rg_state.reset_streak();
-				m_rg_state.grapple_was_thrown_left = false;
-				m_rg_state.grapple_connect_time = emu::timespan{0ull};
-			}
-		}
-
-		// 4) Detect grapple RELEASE (transition out of swinging).
-		if (m_rg_state.was_swinging_prev && !is_swinging && m_rg_state.grapple_was_thrown_left)
-		{
-			// How long was the grapple active?
-			const uint64_t elapsed_ticks =
-				(m_state.m_time - m_rg_state.grapple_connect_time).ticks;
-
-			if (elapsed_ticks <= k_three_frame_ticks)
-			{
-				// Released within 3 frames? Check for positive vx.
-				const float vx = p.m_actor->d.velocity.x;
-				if (vx > 0.0f)
-				{
-					// RG detected!
-					m_rg_state.consecutive++;
-					if (m_rg_state.consecutive > m_rg_state.session_best)
-						m_rg_state.session_best = m_rg_state.consecutive;
-				}
-			}
-
-			// Reset per-grapple tracking.
-			m_rg_state.grapple_was_thrown_left = false;
-			m_rg_state.grapple_connect_time = emu::timespan{0ull};
-		}
-
-		// 5) Detect floor touch → reset streak. Ceiling hits are allowed.
-		const bool just_touched_ground = !m_rg_state.was_on_ground_prev && is_on_ground;
-		if (just_touched_ground)
-		{
-			m_rg_state.reset_streak();
-		}
-
-		// 5) Persist previous-frame state.
-		m_rg_state.was_swinging_prev = is_swinging;
-		m_rg_state.was_grappling_prev = is_grappling;
-		m_rg_state.was_on_ground_prev = is_on_ground;
-		m_rg_state.was_ceiling_hit_prev = is_ceiling_hit;
-		m_rg_state.steps_since_reset++;
+		emu::update_rg_state(m_rg_state, *m_player, m_state.m_time);
 	}
+
+	// --- Challenge run recorder (continuous recording) ---
+	// Active in both grapple_challenge and rg_challenge: recording starts
+	// at level-load (or manual reset) and runs without interruption until
+	// the next reset or 256 KB overflow. On floor-touch-after-airborne the
+	// `finished` flag is raised — speed mode polls it per-frame; RG mode
+	// ignores it and takes a `sr_run_snapshot` on streak-break instead.
+	if ((m_game_mode == emu::GameMode::grapple_challenge ||
+		 m_game_mode == emu::GameMode::rg_challenge)
+		&& m_player != nullptr && m_player->m_actor != nullptr
+		&& m_run_recorder.active)
+	{
+		auto& rec = m_run_recorder;
+		rec.global_tick++;
+
+		const bool is_on_ground = m_player->d.is_on_ground;
+		const float speed = m_player->m_actor->d.velocity.length();
+
+		if (rec.first_tick)
+		{
+			// Seed the log with the starting input bitmask at delta=0 so
+			// the server replay knows the initial state.
+			rec.first_tick = false;
+			rec.start_tick = rec.global_tick;
+			rec.max_speed = speed;
+			rec.last_bitmask = input_bitmask;
+			rec.last_event_global_tick = rec.global_tick;
+			rec.append_event(input_bitmask);
+		}
+
+		if (speed > rec.max_speed) rec.max_speed = speed;
+
+		if (input_bitmask != rec.last_bitmask)
+		{
+			rec.append_event(input_bitmask);
+			rec.last_bitmask = input_bitmask;
+		}
+
+		// Track airborne state — floor touch only fires `finished` after
+		// the player has actually left the ground at least once since the
+		// last submission, so spawn-on-floor doesn't immediately submit.
+		if (!is_on_ground) rec.has_been_airborne = true;
+
+		if (rec.has_been_airborne && !rec.was_on_ground_prev && is_on_ground)
+		{
+			// Floor touched after being airborne → mark a submission point.
+			// Recording continues; JS will read the log + max_speed via
+			// sr_run_consume_finished and decide whether to submit.
+			rec.end_tick = rec.global_tick;
+			rec.finished = true;
+			rec.has_been_airborne = false;
+		}
+
+		// Hard cap on payload — drop the recorder rather than letting the
+		// log grow unbounded. JS treats this as a forced reset.
+		if (rec.log.size() > run_recorder::k_log_max_bytes)
+		{
+			rec.active = false;
+		}
+
+		rec.was_on_ground_prev = is_on_ground;
+	}
+
 	m_camera.viewport_size = viewport_size;
 	m_camera.update(33333, m_player->m_actor->d.position);
 

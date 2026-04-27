@@ -50,7 +50,7 @@ if(EMSCRIPTEN)
         -sMODULARIZE=1
         -sEXPORT_NAME=createSrModule
         -sENVIRONMENT=web
-        -sEXPORTED_FUNCTIONS=['_main','_sr_set_local_identity','_sr_load_map','_sr_push_ghost','_sr_set_ghost_identity','_sr_remove_ghost','_sr_get_local_snapshot','_sr_get_player_screen_pos','_sr_set_binding','_sr_push_controller_input','_sr_teleport_local','_sr_reset_local','_sr_set_target_fps','_sr_set_visual_bg','_sr_set_visual_walls','_sr_set_visual_grapple_stripe','_sr_set_visual_wallclimb_stripe','_sr_set_visual_grapple_cord','_sr_set_visual_grapple_head','_sr_set_visual_grapple_head_size','_sr_set_visual_boost_section','_sr_set_visual_boost_pickup','_sr_save_state','_sr_load_state','_sr_trail_clear','_sr_trail_clear_track','_sr_trail_set_track_opacity','_sr_trail_set_track_visible','_sr_trail_register_image','_sr_trail_add_layer','_sr_load_challenge','_sr_get_max_speed','_sr_reset_challenge','_sr_load_rg_challenge','_sr_get_rg_consecutive','_sr_get_rg_best','_sr_reset_rg_challenge','_malloc','_free']
+        -sEXPORTED_FUNCTIONS=['_main','_sr_set_local_identity','_sr_load_map','_sr_push_ghost','_sr_set_ghost_identity','_sr_remove_ghost','_sr_get_local_snapshot','_sr_get_player_screen_pos','_sr_set_binding','_sr_push_controller_input','_sr_teleport_local','_sr_reset_local','_sr_set_target_fps','_sr_set_visual_bg','_sr_set_visual_walls','_sr_set_visual_grapple_stripe','_sr_set_visual_wallclimb_stripe','_sr_set_visual_grapple_cord','_sr_set_visual_grapple_head','_sr_set_visual_grapple_head_size','_sr_set_visual_boost_section','_sr_set_visual_boost_pickup','_sr_set_visual_show_boost_bar','_sr_save_state','_sr_load_state','_sr_trail_clear','_sr_trail_clear_track','_sr_trail_set_track_opacity','_sr_trail_set_track_visible','_sr_trail_register_image','_sr_trail_add_layer','_sr_load_challenge','_sr_get_max_speed','_sr_reset_challenge','_sr_load_rg_challenge','_sr_get_rg_consecutive','_sr_get_rg_best','_sr_reset_rg_challenge','_sr_run_sim_version','_sr_run_is_active','_sr_run_is_finished','_sr_run_finished_log_size','_sr_run_consume_finished','_sr_run_snapshot','_sr_replay_start','_sr_replay_stop','_sr_replay_is_active','_sr_replay_progress_permille','_malloc','_free']
         -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','HEAPF32','stringToUTF8','UTF8ToString']
         --preload-file ${CMAKE_SOURCE_DIR}/assets/maps@/maps
     )
@@ -112,5 +112,39 @@ if(EMSCRIPTEN)
         "${SR_CPP_ROOT}/drawing"
         "${SR_CPP_ROOT}/command"
         "${SR_CPP_ROOT}/utility"
+    )
+
+    # Server-side deterministic replay binary. Compiled from emulation/*
+    # only — no GLFW, no GL, no playground/instance/network/drawing. Loaded
+    # at boot by apps/server/src/replay.ts via WebAssembly.instantiate to
+    # validate submitted runs.
+    file(GLOB REPLAY_EMU_SOURCES "${SR_CPP_ROOT}/emulation/*.cpp")
+    set(REPLAY_MAIN "${CMAKE_SOURCE_DIR}/platform/replay_main.cpp")
+
+    add_executable(sr_replay ${REPLAY_EMU_SOURCES} ${REPLAY_MAIN})
+
+    target_include_directories(sr_replay PRIVATE
+        "${SR_CPP_ROOT}"
+        "${SR_CPP_ROOT}/emulation"
+        "${SR_CPP_ROOT}/emulation/utility"
+    )
+
+    target_compile_options(sr_replay PRIVATE
+        -fexceptions
+    )
+
+    target_link_options(sr_replay PRIVATE
+        -fexceptions
+        -sALLOW_MEMORY_GROWTH=1
+        -sMODULARIZE=1
+        -sEXPORT_NAME=createSrReplay
+        -sENVIRONMENT=node
+        -sEXPORTED_FUNCTIONS=['_sr_replay_run','_sr_replay_rg_run','_malloc','_free']
+        -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','HEAPF32']
+    )
+
+    set_target_properties(sr_replay PROPERTIES
+        SUFFIX ".js"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/../apps/server/wasm"
     )
 endif()

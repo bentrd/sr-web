@@ -11,8 +11,15 @@ import {
 	getRgAllTimeLeaderboard,
 	rgAllTimeBestForPlayer,
 	rgAllTimeRankForPlayer,
+	submitRun,
+	markRunVerified,
+	submitRgRun,
+	markRgRunVerified,
+	getRunById,
+	getRgRunById,
 } from "./leaderboard";
 import { handleAdminRequest } from "./admin";
+import { replayRun, speedMatches, replayRgRun, streakMatches } from "./replay";
 
 const PORT = Number(process.env.PORT ?? 4000);
 
@@ -35,6 +42,11 @@ function corsResponse(body: string | null, init?: ResponseInit): Response {
 const TRAIL_B64_MAX = 384 * 1024;
 const SCORE_SUBMIT_COOLDOWN_MS = 10_000;
 const SCORE_MAX_SPEED_CAP = 100_000;
+// Raw input log cap (bytes, before base64). Mirrors run_recorder::k_log_max_bytes
+// in C++ — both sides reject anything larger.
+const RUN_INPUT_RAW_MAX = 256 * 1024;
+const RUN_INPUT_B64_MAX = Math.ceil((RUN_INPUT_RAW_MAX * 4) / 3) + 16;
+const RUN_DURATION_TICKS_MAX = 5 * 3600 * 300; // 5 h at 300 Hz
 
 const store = new RoomStore();
 
@@ -146,6 +158,60 @@ const server = Bun.serve<WsData, never>({
 			return corsResponse(JSON.stringify(entries), {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
+			});
+		}
+
+		// Public replay fetch. Returns the recorded input log + metadata so
+		// any client can rehydrate a run via sr_replay_start. No auth: a
+		// run blob is just `inputs to play back` — there's nothing in it
+		// that isn't already implied by the leaderboard entry's existence.
+		const runMatch = url.pathname.match(/^\/run\/(\d+)$/);
+		if (runMatch && req.method === "GET") {
+			const id = Number(runMatch[1]);
+			const run = getRunById(id);
+			if (!run) {
+				return corsResponse(JSON.stringify({ error: "not_found" }), {
+					status: 404,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return corsResponse(JSON.stringify({
+				id: run.id,
+				playerName: run.playerName,
+				claimedMaxSpeed: run.claimedMaxSpeed,
+				durationTicks: run.durationTicks,
+				simVersion: run.simVersion,
+				verified: run.verified,
+				timestamp: run.timestamp,
+				mode: "grapple_challenge",
+				inputs: Buffer.from(run.inputs).toString("base64"),
+			}), {
+				headers: { "content-type": "application/json", "cache-control": "public, max-age=300" },
+			});
+		}
+
+		const rgRunMatch = url.pathname.match(/^\/rg-run\/(\d+)$/);
+		if (rgRunMatch && req.method === "GET") {
+			const id = Number(rgRunMatch[1]);
+			const run = getRgRunById(id);
+			if (!run) {
+				return corsResponse(JSON.stringify({ error: "not_found" }), {
+					status: 404,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return corsResponse(JSON.stringify({
+				id: run.id,
+				playerName: run.playerName,
+				claimedMaxStreak: run.claimedMaxStreak,
+				durationTicks: run.durationTicks,
+				simVersion: run.simVersion,
+				verified: run.verified,
+				timestamp: run.timestamp,
+				mode: "rg_challenge",
+				inputs: Buffer.from(run.inputs).toString("base64"),
+			}), {
+				headers: { "content-type": "application/json", "cache-control": "public, max-age=300" },
 			});
 		}
 
@@ -547,8 +613,127 @@ const server = Bun.serve<WsData, never>({
 							rank: e.rank,
 							name: e.name,
 							maxSpeed: e.maxSpeed,
+							runId: e.runId,
 						})),
 					} satisfies import("@sr-web/protocol").Leaderboard));
+					return;
+				}
+
+				case "submit_run": {
+					// Phase 1: store the input stream + claimed speed for offline
+					// analysis. We don't replay-validate yet — that's Phase 2 once
+					// we've collected enough real streams to confirm determinism
+					// across platforms. For now this runs alongside submit_score:
+					// the legacy path keeps the leaderboard live, this path quietly
+					// accumulates evidence.
+					if (!ws.data.roomCode) return;
+					const room = store.getRoom(ws.data.roomCode);
+					if (!room || room.mode !== "grapple_challenge") return;
+					const me = room.players.get(ws.data.playerId);
+					if (!me) return;
+
+					const m = msg as {
+						claimedMaxSpeed: number;
+						durationTicks: number;
+						simVersion: number;
+						inputs: string;
+					};
+					if (
+						typeof m.claimedMaxSpeed !== "number" ||
+						!Number.isFinite(m.claimedMaxSpeed) ||
+						m.claimedMaxSpeed <= 0 ||
+						m.claimedMaxSpeed > SCORE_MAX_SPEED_CAP
+					) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "claimedMaxSpeed must be a positive number",
+						});
+					}
+					if (
+						typeof m.durationTicks !== "number" ||
+						!Number.isInteger(m.durationTicks) ||
+						m.durationTicks <= 0 ||
+						m.durationTicks > RUN_DURATION_TICKS_MAX
+					) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "durationTicks out of range",
+						});
+					}
+					if (typeof m.simVersion !== "number" || !Number.isInteger(m.simVersion) || m.simVersion < 1) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "simVersion required",
+						});
+					}
+					if (typeof m.inputs !== "string" || m.inputs.length === 0 || m.inputs.length > RUN_INPUT_B64_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "inputs must be base64 string under cap",
+						});
+					}
+					let raw: Uint8Array;
+					try {
+						raw = Uint8Array.from(atob(m.inputs), (c) => c.charCodeAt(0));
+					} catch {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "inputs base64 decode failed",
+						});
+					}
+					if (raw.length === 0 || raw.length > RUN_INPUT_RAW_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "inputs raw size out of range",
+						});
+					}
+
+					// No cooldown here — submit_run fires alongside submit_score
+					// from the same client event (floor-touch with PR). Sharing
+					// the score cooldown would race the two messages. The server
+					// still bounds runs by payload size + duration, and the client
+					// only sends on PR which is naturally rare.
+
+					let runId = 0;
+					try {
+						runId = submitRun(
+							todayDate(),
+							me.name,
+							m.claimedMaxSpeed,
+							m.durationTicks,
+							m.simVersion,
+							raw,
+						);
+					} catch {
+						// Storage failures shouldn't break the live game — just drop.
+						return;
+					}
+
+					// Fire the replay validator without blocking the response.
+					// Marks `verified = 1` when the replayed peak speed matches
+					// the claimed value within tolerance, `-1` when it diverges,
+					// and leaves it at 0 when the replay itself errors out (so
+					// we can re-process those manually instead of treating an
+					// engine bug as a cheat).
+					void replayRun(raw, m.durationTicks).then((res) => {
+						if (!res.ok) return;
+						const verdict: 1 | -1 = speedMatches(m.claimedMaxSpeed, res.maxSpeed)
+							? 1
+							: -1;
+						try {
+							markRunVerified(runId, verdict);
+						} catch {
+							// DB write failures here are non-fatal.
+						}
+					}).catch(() => {
+						// Background — never throw out of the handler.
+					});
 					return;
 				}
 
@@ -589,8 +774,109 @@ const server = Bun.serve<WsData, never>({
 							rank: e.rank,
 							name: e.name,
 							maxStreak: e.maxStreak,
+							runId: e.runId,
 						})),
 					} satisfies import("@sr-web/protocol").RgLeaderboard));
+					return;
+				}
+
+				case "submit_rg_run": {
+					// RG-mode counterpart to submit_run. Stores the input log
+					// + claimed max_streak, then kicks off a deterministic
+					// replay to flip the verified flag.
+					if (!ws.data.roomCode) return;
+					const room = store.getRoom(ws.data.roomCode);
+					if (!room || room.mode !== "rg_challenge") return;
+					const me = room.players.get(ws.data.playerId);
+					if (!me) return;
+
+					const m = msg as {
+						claimedMaxStreak: number;
+						durationTicks: number;
+						simVersion: number;
+						inputs: string;
+					};
+					if (
+						typeof m.claimedMaxStreak !== "number" ||
+						!Number.isInteger(m.claimedMaxStreak) ||
+						m.claimedMaxStreak <= 0 ||
+						m.claimedMaxStreak > 99999
+					) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "claimedMaxStreak must be a positive integer",
+						});
+					}
+					if (
+						typeof m.durationTicks !== "number" ||
+						!Number.isInteger(m.durationTicks) ||
+						m.durationTicks <= 0 ||
+						m.durationTicks > RUN_DURATION_TICKS_MAX
+					) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "durationTicks out of range",
+						});
+					}
+					if (typeof m.simVersion !== "number" || !Number.isInteger(m.simVersion) || m.simVersion < 1) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "simVersion required",
+						});
+					}
+					if (typeof m.inputs !== "string" || m.inputs.length === 0 || m.inputs.length > RUN_INPUT_B64_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "inputs must be base64 string under cap",
+						});
+					}
+					let raw: Uint8Array;
+					try {
+						raw = Uint8Array.from(atob(m.inputs), (c) => c.charCodeAt(0));
+					} catch {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "inputs base64 decode failed",
+						});
+					}
+					if (raw.length === 0 || raw.length > RUN_INPUT_RAW_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "inputs raw size out of range",
+						});
+					}
+
+					let rgRunId = 0;
+					try {
+						rgRunId = submitRgRun(
+							todayDate(),
+							me.name,
+							m.claimedMaxStreak,
+							m.durationTicks,
+							m.simVersion,
+							raw,
+						);
+					} catch {
+						return;
+					}
+
+					void replayRgRun(raw, m.durationTicks).then((res) => {
+						if (!res.ok) return;
+						const verdict: 1 | -1 = streakMatches(m.claimedMaxStreak, res.maxStreak)
+							? 1
+							: -1;
+						try {
+							markRgRunVerified(rgRunId, verdict);
+						} catch {
+							// Non-fatal.
+						}
+					}).catch(() => {});
 					return;
 				}
 

@@ -1161,6 +1161,13 @@ button.primary {
 	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.lb-panel-hint {
+	font-size: 0.55rem;
+	color: rgba(255, 255, 255, 0.4);
+	font-style: italic;
+	padding: 0.15rem 0;
+}
+
 .lb-panel-table {
 	width: 100%;
 	border-collapse: collapse;
@@ -1199,6 +1206,75 @@ button.primary {
 .lb-panel-me .lb-panel-name,
 .lb-panel-me .lb-panel-rank {
 	color: rgba(102, 187, 106, 0.9);
+}
+
+/* Click-to-replay rows. Only rows with a backing run id light up; rows
+   without one (legacy scores) stay inert. */
+.lb-panel-replayable {
+	cursor: pointer;
+	transition: background-color 0.12s ease;
+}
+
+.lb-panel-replayable:hover {
+	background-color: rgba(255, 255, 255, 0.06);
+}
+
+/* While a replay is playing back, sit a banner above the leaderboard. */
+.replay-banner {
+	position: absolute;
+	top: 0.5rem;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.4rem 0.7rem;
+	border-radius: 0.3rem;
+	background: rgba(0, 0, 0, 0.7);
+	pointer-events: auto;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.7rem;
+	color: rgba(255, 255, 255, 0.85);
+	z-index: 5;
+}
+
+.replay-banner-title strong {
+	color: var(--accent);
+}
+
+.replay-banner-rank,
+.replay-banner-value {
+	color: rgba(255, 255, 255, 0.55);
+}
+
+.replay-banner-progress {
+	position: relative;
+	width: 8rem;
+	height: 4px;
+	background: rgba(255, 255, 255, 0.1);
+	border-radius: 2px;
+	overflow: hidden;
+}
+
+.replay-banner-progress-bar {
+	height: 100%;
+	background: var(--accent);
+	transition: width 0.05s linear;
+}
+
+.replay-banner-stop {
+	background: transparent;
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	color: rgba(255, 255, 255, 0.85);
+	border-radius: 0.2rem;
+	padding: 0.15rem 0.45rem;
+	font-size: 0.65rem;
+	cursor: pointer;
+	font-family: inherit;
+}
+
+.replay-banner-stop:hover {
+	background: rgba(255, 255, 255, 0.08);
 }
 
 /* ── Quick Chat in-game overlay ── */

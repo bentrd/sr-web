@@ -120,8 +120,25 @@ interface CAbi {
 	setVisualGrappleHeadSize: (size: number) => void;
 	setVisualBoostSection: (r: number, g: number, b: number, a: number) => void;
 	setVisualBoostPickup: (r: number, g: number, b: number, a: number) => void;
+	setVisualShowBoostBar: (show: boolean) => void;
 	saveState: () => void;
 	loadState: () => boolean;
+	// Anti-cheat run recorder. consumeFinishedRun returns null when no run
+	// is pending, otherwise the bytes + scoring metadata for the run that
+	// just ended (and clears the WASM-side buffer).
+	runSimVersion: () => number;
+	consumeFinishedRun: () => { inputs: Uint8Array; maxSpeed: number; durationTicks: number } | null;
+	// Like consumeFinishedRun but ungated by the floor-touch trigger — JS
+	// uses this in RG mode where the streak-break event is detected in JS.
+	// Returns null only if the recorder is inactive (e.g. log overflowed).
+	snapshotRun: () => { inputs: Uint8Array; maxSpeed: number; durationTicks: number } | null;
+	// Browser-side replay playback. mode: 0=speed challenge, 1=RG challenge.
+	// Loads the level fresh, copies the input log into the WASM heap, and
+	// drives the sim from the replay buffer until exhausted.
+	startReplay: (inputs: Uint8Array, durationTicks: number, mode: number) => boolean;
+	stopReplay: () => void;
+	isReplayActive: () => boolean;
+	replayProgressPermille: () => number;
 }
 
 function bindCAbi(mod: SrModule): CAbi {
@@ -163,8 +180,24 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_v_grapple_head_size = mod.cwrap("sr_set_visual_grapple_head_size", null, ["number"]);
 	const f_v_boost_section = mod.cwrap("sr_set_visual_boost_section", null, ["number", "number", "number", "number"]);
 	const f_v_boost_pickup = mod.cwrap("sr_set_visual_boost_pickup", null, ["number", "number", "number", "number"]);
+	const f_v_show_boost_bar = mod.cwrap("sr_set_visual_show_boost_bar", null, ["number"]);
 	const f_save_state = mod.cwrap("sr_save_state", null, []);
 	const f_load_state = mod.cwrap("sr_load_state", "number", []);
+	const f_run_sim_ver = mod.cwrap("sr_run_sim_version", "number", []);
+	const f_run_finished = mod.cwrap("sr_run_is_finished", "number", []);
+	const f_run_log_size = mod.cwrap("sr_run_finished_log_size", "number", []);
+	const f_run_consume = mod.cwrap("sr_run_consume_finished", "number", [
+		"number", "number", "number", "number",
+	]);
+	const f_run_snapshot = mod.cwrap("sr_run_snapshot", "number", [
+		"number", "number", "number", "number",
+	]);
+	const f_replay_start = mod.cwrap("sr_replay_start", "number", [
+		"number", "number", "number", "number",
+	]);
+	const f_replay_stop = mod.cwrap("sr_replay_stop", null, []);
+	const f_replay_active = mod.cwrap("sr_replay_is_active", "number", []);
+	const f_replay_progress = mod.cwrap("sr_replay_progress_permille", "number", []);
 
 	// Persistent scratch buffers in WASM heap. Allocated once; freed on
 	// page unload. malloc/free are exported but we never hit them more
@@ -172,6 +205,13 @@ function bindCAbi(mod: SrModule): CAbi {
 	const snapPtr = mod._malloc(SNAPSHOT_BYTES);
 	const xPtr = mod._malloc(4);
 	const yPtr = mod._malloc(4);
+	// Out-params for sr_run_consume_finished + a buffer big enough for the
+	// hardest cap (256 KB raw). Kept resident — runs end at most once per
+	// floor touch so the cost of re-allocating per call is silly.
+	const RUN_LOG_CAP = 256 * 1024;
+	const runLogPtr = mod._malloc(RUN_LOG_CAP);
+	const runMaxSpeedPtr = mod._malloc(4);
+	const runDurationPtr = mod._malloc(4);
 
 	return {
 		setLocalIdentity: (name, r, g, b) => {
@@ -251,8 +291,47 @@ function bindCAbi(mod: SrModule): CAbi {
 		setVisualGrappleHeadSize: (size) => { f_v_grapple_head_size(size); },
 		setVisualBoostSection: (r, g, b, a) => { f_v_boost_section(r, g, b, a); },
 		setVisualBoostPickup: (r, g, b, a) => { f_v_boost_pickup(r, g, b, a); },
+		setVisualShowBoostBar: (show) => { f_v_show_boost_bar(show ? 1 : 0); },
 		saveState: () => { f_save_state(); },
 		loadState: () => (f_load_state() as number) !== 0,
+		runSimVersion: () => f_run_sim_ver() as number,
+		consumeFinishedRun: () => {
+			if ((f_run_finished() as number) === 0) return null;
+			const need = f_run_log_size() as number;
+			if (need <= 0 || need > RUN_LOG_CAP) return null;
+			const written = f_run_consume(
+				runLogPtr, RUN_LOG_CAP,
+				runMaxSpeedPtr, runDurationPtr,
+			) as number;
+			if (written === 0) return null;
+			// HEAPU8 view may move after WASM allocations — re-read each call.
+			const inputs = mod.HEAPU8.slice(runLogPtr, runLogPtr + written);
+			const maxSpeed = mod.HEAPF32[runMaxSpeedPtr >> 2] ?? 0;
+			const dur32 = new Uint32Array(mod.HEAPU8.buffer, runDurationPtr, 1)[0] ?? 0;
+			return { inputs, maxSpeed, durationTicks: dur32 };
+		},
+		snapshotRun: () => {
+			const written = f_run_snapshot(
+				runLogPtr, RUN_LOG_CAP,
+				runMaxSpeedPtr, runDurationPtr,
+			) as number;
+			if (written === 0) return null;
+			const inputs = mod.HEAPU8.slice(runLogPtr, runLogPtr + written);
+			const maxSpeed = mod.HEAPF32[runMaxSpeedPtr >> 2] ?? 0;
+			const dur32 = new Uint32Array(mod.HEAPU8.buffer, runDurationPtr, 1)[0] ?? 0;
+			return { inputs, maxSpeed, durationTicks: dur32 };
+		},
+		startReplay: (inputs, durationTicks, mode) => {
+			if (inputs.length === 0 || inputs.length > RUN_LOG_CAP) return false;
+			// Reuse the run-log scratch buffer — recorder gets cleared by
+			// start_replay on the C++ side, so there's no overlap.
+			mod.HEAPU8.set(inputs, runLogPtr);
+			const ok = f_replay_start(runLogPtr, inputs.length, durationTicks, mode) as number;
+			return ok !== 0;
+		},
+		stopReplay: () => { f_replay_stop(); },
+		isReplayActive: () => (f_replay_active() as number) !== 0,
+		replayProgressPermille: () => f_replay_progress() as number,
 	};
 }
 
@@ -291,9 +370,15 @@ export function Game(): JSX.Element {
 	const [rgConsecutive, setRgConsecutive] = useState<number>(0);
 	const [rgBest, setRgBest] = useState<number>(0);
 	const [scoreAck, setScoreAck] = useState<{ rank: number; dailyBest: number } | null>(null);
-	const [leaderboardEntries, setLeaderboardEntries] = useState<Array<{ rank: number; name: string; value: number }>>([]);
+	const [leaderboardEntries, setLeaderboardEntries] = useState<Array<{ rank: number; name: string; value: number; runId: number | null }>>([]);
 	const [leaderboardMode, setLeaderboardMode] = useState<"speed" | "rg">("speed");
 	const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+
+	// Click-to-replay state. Clicking a leaderboard row fetches the run and
+	// fires a browser-side deterministic replay. The replay banner stays up
+	// until the run finishes (poll `isReplayActive`) or the user clicks stop.
+	const [replayInfo, setReplayInfo] = useState<{ name: string; value: number; rank: number } | null>(null);
+	const [replayProgress, setReplayProgress] = useState(0); // 0..1
 	
 	const submittedRef = useRef(false);
 
@@ -341,6 +426,10 @@ export function Game(): JSX.Element {
 				} else {
 					abi.loadMap(`/maps/${room.mapId}.sr`);
 				}
+				// Hide the in-game boost meter HUD bar in challenge modes —
+				// the leaderboard + session-best already crowd the top of the
+				// screen and the bar isn't useful for runs.
+				abi.setVisualShowBoostBar(room.mode === "standard");
 				// Trail is best-effort — failures must not block the game
 				// from starting. If the user picked a custom .srt, load
 				// that into the local player's track (id ""); otherwise
@@ -642,6 +731,7 @@ export function Game(): JSX.Element {
 						rank: e.rank,
 						name: e.name,
 						value: e.maxSpeed,
+						runId: e.runId ?? null,
 					})));
 					return;
 				}
@@ -651,6 +741,7 @@ export function Game(): JSX.Element {
 						rank: e.rank,
 						name: e.name,
 						value: e.maxStreak,
+						runId: e.runId ?? null,
 					})));
 					return;
 				}
@@ -813,6 +904,36 @@ export function Game(): JSX.Element {
 			if (isChallenge) {
 				const maxSp = Math.round(abi.getMaxSpeed());
 				setSessionMax((prev) => (prev === maxSp ? prev : maxSp));
+
+				// Drain any run that just ended (floor touched). On a PR,
+				// fire submit_run with the input stream + submit_score to
+				// update the live leaderboard — Phase 1 keeps the legacy
+				// scoring path live while runs accumulate for replay
+				// validation.
+				const finished = abi.consumeFinishedRun();
+				if (finished !== null) {
+					const speedRounded = Math.round(finished.maxSpeed);
+					if (speedRounded > 0 && speedRounded > allTimeBestRef.current) {
+						allTimeBestRef.current = speedRounded;
+						submittedRef.current = true;
+						let b64 = "";
+						const chunk = 0x8000;
+						for (let i = 0; i < finished.inputs.length; i += chunk) {
+							b64 += String.fromCharCode.apply(
+								null,
+								finished.inputs.subarray(i, i + chunk) as unknown as number[],
+							);
+						}
+						ws.send({
+							type: "submit_run",
+							claimedMaxSpeed: speedRounded,
+							durationTicks: finished.durationTicks,
+							simVersion: abi.runSimVersion(),
+							inputs: btoa(b64),
+						});
+						ws.send({ type: "submit_score", maxSpeed: speedRounded });
+					}
+				}
 			}
 
 			// RG Challenge: poll consecutive count + session best.
@@ -829,6 +950,29 @@ export function Game(): JSX.Element {
 				if (prevRg > 0 && rg === 0 && best > 0 && best > allTimeBestRef.current) {
 					allTimeBestRef.current = best;
 					ws.send({ type: "submit_rg_score", maxStreak: best });
+
+					// Snapshot the recorder for server-side replay validation.
+					// Recorder keeps running across snapshots, so subsequent
+					// PR breaks in the same session resubmit a strictly-longer
+					// log starting from the same level-load anchor.
+					const snap = abi.snapshotRun();
+					if (snap !== null && snap.inputs.length > 0) {
+						let b64 = "";
+						const chunk = 0x8000;
+						for (let i = 0; i < snap.inputs.length; i += chunk) {
+							b64 += String.fromCharCode.apply(
+								null,
+								snap.inputs.subarray(i, i + chunk) as unknown as number[],
+							);
+						}
+						ws.send({
+							type: "submit_rg_run",
+							claimedMaxStreak: best,
+							durationTicks: snap.durationTicks,
+							simVersion: abi.runSimVersion(),
+							inputs: btoa(b64),
+						});
+					}
 				}
 			}
 
@@ -946,9 +1090,9 @@ export function Game(): JSX.Element {
 				`${LEADERBOARD_URL.replace("/leaderboard", "/rg-leaderboard")}?limit=10`,
 			);
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			const data = (await res.json()) as Array<{ rank: number; name: string; maxStreak: number }>;
+			const data = (await res.json()) as Array<{ rank: number; name: string; maxStreak: number; runId?: number | null }>;
 			setLeaderboardMode("rg");
-			setLeaderboardEntries(data.map((r) => ({ rank: r.rank, name: r.name, value: r.maxStreak })));
+			setLeaderboardEntries(data.map((r) => ({ rank: r.rank, name: r.name, value: r.maxStreak, runId: r.runId ?? null })));
 		} catch {
 			setLeaderboardEntries([]);
 		} finally {
@@ -962,8 +1106,8 @@ export function Game(): JSX.Element {
 			setLeaderboardMode("speed");
 			const res = await fetch(`${LEADERBOARD_URL}?limit=10`);
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			const data = (await res.json()) as Array<{ rank: number; name: string; maxSpeed: number }>;
-			setLeaderboardEntries(data.map((r) => ({ rank: r.rank, name: r.name, value: r.maxSpeed })));
+			const data = (await res.json()) as Array<{ rank: number; name: string; maxSpeed: number; runId?: number | null }>;
+			setLeaderboardEntries(data.map((r) => ({ rank: r.rank, name: r.name, value: r.maxSpeed, runId: r.runId ?? null })));
 		} catch {
 			setLeaderboardEntries([]);
 		} finally {
@@ -1008,6 +1152,69 @@ export function Game(): JSX.Element {
 			}
 		};
 	}, [isChallenge, ws]);
+
+	// Stop the active replay and put the local player back in a clean state.
+	// We don't try to restore mid-run state — replay clobbers the level and
+	// the user gets a fresh challenge to keep things predictable.
+	const stopReplay = useCallback(() => {
+		const abi = abiRef.current;
+		if (!abi) return;
+		abi.stopReplay();
+		if (isChallenge) abi.resetChallenge();
+		else if (isRgChallenge) abi.resetRgChallenge();
+		// Reset session-best baselines so the next genuine run by the user
+		// can submit its score normally. The replay sim drove max_speed /
+		// rg_consecutive on the WASM side; resetChallenge above zeros them.
+		submittedRef.current = false;
+		setSessionMax(0);
+		setRgConsecutive(0);
+		setReplayInfo(null);
+		setReplayProgress(0);
+	}, [isChallenge, isRgChallenge]);
+
+	// Begin watching a replay. Fetches the run blob from the server, decodes
+	// the base64 input log, and hands it to the WASM replay machinery.
+	const startReplayFor = useCallback(async (entry: { rank: number; name: string; value: number; runId: number | null }) => {
+		const abi = abiRef.current;
+		if (!abi || entry.runId == null) return;
+		const base = LEADERBOARD_URL.replace(/\/leaderboard$/, "");
+		const path = leaderboardMode === "rg" ? `/rg-run/${entry.runId}` : `/run/${entry.runId}`;
+		try {
+			const res = await fetch(`${base}${path}`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const data = await res.json() as { inputs: string; durationTicks: number };
+			const raw = atob(data.inputs);
+			const bytes = new Uint8Array(raw.length);
+			for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+			const mode = leaderboardMode === "rg" ? 1 : 0;
+			const ok = abi.startReplay(bytes, data.durationTicks, mode);
+			if (!ok) throw new Error("replay_start failed");
+			submittedRef.current = true; // suppress auto-submit while replaying
+			setReplayInfo({ name: entry.name, value: entry.value, rank: entry.rank });
+			setReplayProgress(0);
+		} catch (e) {
+			console.warn("[replay] failed to start replay", e);
+		}
+	}, [leaderboardMode]);
+
+	// Poll the WASM replay state while a replay is active so we can update
+	// the progress bar and auto-clear when the run ends.
+	useEffect(() => {
+		if (!replayInfo) return;
+		let raf = 0;
+		const tick = (): void => {
+			const abi = abiRef.current;
+			if (!abi) return;
+			if (!abi.isReplayActive()) {
+				stopReplay();
+				return;
+			}
+			setReplayProgress(abi.replayProgressPermille() / 1000);
+			raf = requestAnimationFrame(tick);
+		};
+		raf = requestAnimationFrame(tick);
+		return () => { cancelAnimationFrame(raf); };
+	}, [replayInfo, stopReplay]);
 
 	const onCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
 		const canvas = canvasRef.current;
@@ -1102,17 +1309,43 @@ export function Game(): JSX.Element {
 				{(isChallenge || isRgChallenge) && leaderboardEntries.length > 0 && (
 					<div className="leaderboard-panel">
 						<div className="lb-panel-title">All-Time Top 10</div>
+						<div className="lb-panel-hint">Click a row to watch the replay</div>
 						<table className="lb-panel-table">
 							<tbody>
-								{leaderboardEntries.slice(0, 10).map((e) => (
-									<tr key={e.rank} className={e.name === identity.name ? "lb-panel-me" : ""}>
-										<td className="lb-panel-rank">#{e.rank}</td>
-										<td className="lb-panel-name">{e.name}</td>
-										<td className="lb-panel-value">{e.value}</td>
-									</tr>
-								))}
+								{leaderboardEntries.slice(0, 10).map((e) => {
+									const replayable = e.runId != null;
+									const classes = [
+										e.name === identity.name ? "lb-panel-me" : "",
+										replayable ? "lb-panel-replayable" : "",
+									].filter(Boolean).join(" ");
+									return (
+										<tr
+											key={e.rank}
+											className={classes}
+											onClick={replayable ? () => void startReplayFor(e) : undefined}
+											title={replayable ? "Click to watch replay" : "No replay available"}
+										>
+											<td className="lb-panel-rank">#{e.rank}</td>
+											<td className="lb-panel-name">{e.name}</td>
+											<td className="lb-panel-value">{e.value}</td>
+										</tr>
+									);
+								})}
 							</tbody>
 						</table>
+					</div>
+				)}
+				{replayInfo && (
+					<div className="replay-banner">
+						<div className="replay-banner-title">
+							Watching <strong>{replayInfo.name}</strong>'s run
+							<span className="replay-banner-rank"> · #{replayInfo.rank}</span>
+							<span className="replay-banner-value"> · {replayInfo.value}</span>
+						</div>
+						<div className="replay-banner-progress">
+							<div className="replay-banner-progress-bar" style={{ width: `${replayProgress * 100}%` }} />
+						</div>
+						<button className="replay-banner-stop" onClick={stopReplay} type="button">Stop</button>
 					</div>
 				)}
 				

@@ -433,6 +433,12 @@ extern "C"
 		auto& v = draw::visuals();
 		v.boost_pickup_r = r; v.boost_pickup_g = g; v.boost_pickup_b = b; v.boost_pickup_a = a;
 	}
+	// Toggle the top-center boost meter HUD bar. JS turns this off in
+	// challenge modes so the bar doesn't overlap the leaderboard / HUD.
+	void sr_set_visual_show_boost_bar(int show)
+	{
+		draw::visuals().show_boost_bar = (show != 0);
+	}
 
 	// Quick-save the local player's pose so the JS side can later
 	// quick-load it. Captures position + velocity + boost charge — enough
@@ -530,6 +536,143 @@ extern "C"
 			taper != 0,
 			flip_h != 0, flip_v != 0, force_right_side_up != 0,
 			offset_x, offset_y, invert_offset != 0);
+	}
+
+	// --- Grapple-challenge run recorder ---
+	// All entry points are no-ops if no instance is registered.
+
+	unsigned int sr_run_sim_version()
+	{
+		return run_recorder::k_sim_version;
+	}
+
+	int sr_run_is_active()
+	{
+		if (g_inst == nullptr) return 0;
+		return g_inst->m_playground.m_run_recorder.active ? 1 : 0;
+	}
+
+	int sr_run_is_finished()
+	{
+		if (g_inst == nullptr) return 0;
+		return g_inst->m_playground.m_run_recorder.finished ? 1 : 0;
+	}
+
+	unsigned int sr_run_finished_log_size()
+	{
+		if (g_inst == nullptr) return 0;
+		const auto& rec = g_inst->m_playground.m_run_recorder;
+		if (!rec.finished) return 0;
+		return static_cast<unsigned int>(rec.log.size());
+	}
+
+	// Atomically read out the current snapshot of the recording (log so
+	// far, peak speed so far, ticks since recording started) and clear
+	// the `finished` flag so the recorder can fire it again on the next
+	// floor-touch-after-airborne. The recorder keeps running — JS can
+	// submit multiple PRs from a single level-load. Returns the number
+	// of bytes copied into out_buf (0 if no run is pending or buf_size
+	// is too small).
+	unsigned int sr_run_consume_finished(
+		unsigned char* out_buf, unsigned int buf_size,
+		float* out_max_speed,
+		unsigned int* out_duration_ticks)
+	{
+		if (g_inst == nullptr) return 0;
+		auto& rec = g_inst->m_playground.m_run_recorder;
+		if (!rec.finished) return 0;
+		if (out_buf == nullptr) return 0;
+
+		const std::size_t need = rec.log.size();
+		if (buf_size < need) return 0;
+
+		std::memcpy(out_buf, rec.log.data(), need);
+		if (out_max_speed != nullptr) *out_max_speed = rec.max_speed;
+		if (out_duration_ticks != nullptr)
+		{
+			const std::uint64_t dur = (rec.end_tick > rec.start_tick)
+				? (rec.end_tick - rec.start_tick) : 0;
+			*out_duration_ticks = static_cast<unsigned int>(
+				dur > 0xffffffffull ? 0xffffffffull : dur);
+		}
+		// Only clear the finished flag — keep recording so subsequent
+		// floor-touch events can fire it again.
+		rec.finished = false;
+		return static_cast<unsigned int>(need);
+	}
+
+	// Like sr_run_consume_finished but without the `finished` gate. Used
+	// by the RG challenge mode where the streak-break trigger is detected
+	// JS-side rather than C-side. Recorder keeps running; nothing is
+	// cleared on read so subsequent calls return larger logs.
+	unsigned int sr_run_snapshot(
+		unsigned char* out_buf, unsigned int buf_size,
+		float* out_max_speed,
+		unsigned int* out_duration_ticks)
+	{
+		if (g_inst == nullptr) return 0;
+		auto& rec = g_inst->m_playground.m_run_recorder;
+		if (!rec.active) return 0;
+		if (out_buf == nullptr) return 0;
+
+		const std::size_t need = rec.log.size();
+		if (buf_size < need) return 0;
+
+		std::memcpy(out_buf, rec.log.data(), need);
+		if (out_max_speed != nullptr) *out_max_speed = rec.max_speed;
+		if (out_duration_ticks != nullptr)
+		{
+			// Duration = ticks since recording started (vs. floor-touch in
+			// consume_finished). Snapshot is "now" so end_tick may not be
+			// up to date — use global_tick directly.
+			const std::uint64_t dur = (rec.global_tick > rec.start_tick)
+				? (rec.global_tick - rec.start_tick) : 0;
+			*out_duration_ticks = static_cast<unsigned int>(
+				dur > 0xffffffffull ? 0xffffffffull : dur);
+		}
+		return static_cast<unsigned int>(need);
+	}
+
+	// --- Replay playback ---------------------------------------------
+	// Hook for the JS-side "watch this run" feature. start() copies the
+	// log into the playground, regenerates the corresponding challenge
+	// corridor, resets the player, and pauses the run recorder for the
+	// duration of playback. Returns 0 on malformed input / unsupported
+	// mode, 1 on success.
+	//
+	// mode: 0 = grapple_challenge, 1 = rg_challenge.
+	int sr_replay_start(const unsigned char* log, unsigned int log_len,
+		unsigned int duration_ticks, int mode)
+	{
+		if (g_inst == nullptr || log == nullptr) return 0;
+		const bool ok = g_inst->m_playground.start_replay(
+			log, log_len, duration_ticks, mode);
+		return ok ? 1 : 0;
+	}
+
+	void sr_replay_stop()
+	{
+		if (g_inst == nullptr) return;
+		g_inst->m_playground.stop_replay();
+	}
+
+	int sr_replay_is_active()
+	{
+		if (g_inst == nullptr) return 0;
+		return g_inst->m_playground.m_replay.is_active ? 1 : 0;
+	}
+
+	// Returns playback progress as ticks_done * 1000 / duration_ticks
+	// (0..1000). Cheaper to read on the JS side than computing the
+	// ratio across the cwrap boundary.
+	int sr_replay_progress_permille()
+	{
+		if (g_inst == nullptr) return 0;
+		const auto& r = g_inst->m_playground.m_replay;
+		if (r.duration_ticks == 0) return 0;
+		const std::uint64_t done = r.tick > r.duration_ticks
+			? r.duration_ticks : r.tick;
+		return static_cast<int>((done * 1000ull) / r.duration_ticks);
 	}
 
 	// Configure the WASM main loop's frame pacing.

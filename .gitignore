@@ -17,6 +17,12 @@ apps/web/public/sr.wasm
 apps/web/public/sr.data
 apps/web/public/sr.wasm.map
 
+# Server-side replay validator (built by build:wasm into apps/server/wasm/).
+# Built locally before `fly deploy` packages the Docker image.
+apps/server/wasm/sr_replay.js
+apps/server/wasm/sr_replay.wasm
+apps/server/wasm/sr_replay.wasm.map
+
 # Steam Workshop maps — see AGENTS.md, do NOT commit
 game/assets/maps/*.sr
 

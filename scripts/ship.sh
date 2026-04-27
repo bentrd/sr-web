@@ -62,12 +62,17 @@ fi
 
 # ---------------------------------------------------------------- 3. fly
 if [ "${SKIP_FLY:-0}" != "1" ]; then
+  step "Building WASM (game + replay validator)"
+  bash "$ROOT/scripts/build-wasm.sh"
+
   step "Deploying server to Fly.io"
   if ! command -v fly >/dev/null 2>&1; then
     warn "fly CLI not found. Install: https://fly.io/docs/hands-on/install-flyctl/"
     exit 1
   fi
   # Build context must be the repo root (Dockerfile reaches into packages/).
+  # The replay validator (apps/server/wasm/sr_replay.{js,wasm}) was just
+  # built into the Docker context above so it ends up in the image.
   fly deploy \
     --config apps/server/fly.toml \
     --dockerfile apps/server/Dockerfile \

@@ -37,6 +37,11 @@ namespace draw
 		// Super-boost tinted volume (super_boost_volume actor) — 10% green
 		// so it tints without obscuring the underlying tiles.
 		float boost_pickup_r = 0.0f, boost_pickup_g = 1.0f, boost_pickup_b = 0.0f, boost_pickup_a = 0.1f;
+
+		// Top-center boost meter on the local player. Hidden in challenge
+		// modes (the HUD shows session-best instead and the bar overlaps
+		// the leaderboard). Defaults to true to keep regular play unchanged.
+		bool show_boost_bar = true;
 	};
 
 	// Single mutable instance owned by the renderer. Returned by reference
