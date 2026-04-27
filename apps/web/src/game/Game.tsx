@@ -23,6 +23,8 @@ import { GAME_ACTIONS, eventToBinding } from "../state/bindings";
 import { speedColor } from "../state/visuals";
 import { loadDefaultTrail, loadTrailFromBytes, bindTrailAbi } from "./trail/loadTrail";
 import { base64ToBytes as srtBase64ToBytes } from "./trail/parseSrt";
+import { QuickChatMenu } from "./QuickChatMenu";
+import type { QuickChatSlot } from "../state/quickChat";
 
 // 60 Hz network send rate. Sim runs at ~300 Hz inside WASM, render at
 // monitor refresh — the three are deliberately decoupled (see AGENTS.md).
@@ -262,7 +264,7 @@ const HOVER_RADIUS_PX = 30;
 const HOVER_RADIUS_SQ = HOVER_RADIUS_PX * HOVER_RADIUS_PX;
 
 export function Game(): JSX.Element {
-	const { ws, identity, bindings, targetFps, visuals, room, playerId } = useApp();
+	const { ws, identity, bindings, targetFps, visuals, room, playerId, quickChat, sendChat } = useApp();
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const abiRef = useRef<CAbi | null>(null);
@@ -274,6 +276,7 @@ export function Game(): JSX.Element {
 	const [localSpeed, setLocalSpeed] = useState<number | null>(null);
 	const [fps, setFps] = useState<number>(0);
 	const cursorRef = useRef<{ x: number; y: number } | null>(null);
+	const [quickChatMenu, setQuickChatMenu] = useState<number | null>(null);
 
 	// Speed Challenge state
 	const isChallenge = room?.mode === "grapple_challenge";
@@ -287,6 +290,12 @@ export function Game(): JSX.Element {
 	const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 	
 	const submittedRef = useRef(false);
+
+	// Track the player's known all-time best so we can auto-submit
+	// when the session max surpasses it. Initialized from score_ack.
+	const allTimeBestRef = useRef<number>(0);
+	// Track previous RG consecutive count to detect streak→0 transitions.
+	const prevRgConsecutiveRef = useRef<number>(0);
 
 	// Memo'd lookup: peer id -> {name, color}. Updated on every room_state.
 	const peerInfo = useMemo(() => {
@@ -412,8 +421,29 @@ export function Game(): JSX.Element {
 				e.preventDefault();
 				e.stopImmediatePropagation();
 				if (isRgChallenge) {
+					// Auto-submit before resetting if we beat our all-time best this run.
+					if (!submittedRef.current) {
+						const best = Math.round(abi.getRgBest());
+						if (best > 0 && best > allTimeBestRef.current) {
+							allTimeBestRef.current = best;
+							submittedRef.current = true;
+							ws.send({ type: "submit_rg_score", maxStreak: best });
+						}
+					}
+					submittedRef.current = false;
+					prevRgConsecutiveRef.current = 0;
 					abi.resetRgChallenge();
 				} else if (isChallenge) {
+					// Auto-submit before resetting if we beat our all-time best this run.
+					if (!submittedRef.current) {
+						const maxSp = Math.round(abi.getMaxSpeed());
+						if (maxSp > 0 && maxSp > allTimeBestRef.current) {
+							allTimeBestRef.current = maxSp;
+							submittedRef.current = true;
+							ws.send({ type: "submit_score", maxSpeed: maxSp });
+						}
+					}
+					submittedRef.current = false;
 					abi.resetChallenge();
 				} else {
 					abi.resetLocal();
@@ -437,6 +467,68 @@ export function Game(): JSX.Element {
 		window.addEventListener("keydown", onKey, true);
 		return () => window.removeEventListener("keydown", onKey, true);
 	}, [status, isChallenge, bindings.reset.code, bindings.save_state.code, bindings.load_state.code]);
+
+	// Quick chat: number keys 1-4 open menus; pressing 1-4 again while
+	// a menu is open sends the selected message (or cancels on 4).
+	// Also captured at capture phase so GLFW never sees these keystrokes.
+	useEffect(() => {
+		if (status !== "ready" || !room) return;
+
+		const onKey = (e: KeyboardEvent): void => {
+			// Don't interfere with key rebinding in ControlsModal
+			if (document.querySelector(".key-cap-active") !== null) return;
+			// Don't fire when typing in a text input
+			const ae = document.activeElement;
+			if (ae instanceof HTMLElement &&
+				(ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) {
+				return;
+			}
+
+			const code = e.keyCode;
+			const isDigit = code >= 49 && code <= 52; // 1-4
+
+			if (!isDigit) {
+				// Escape closes any open menu
+				if (e.key === "Escape") {
+					setQuickChatMenu((prev) => {
+						if (prev !== null) {
+							e.preventDefault();
+							e.stopImmediatePropagation();
+						}
+						return null;
+					});
+				}
+				return;
+			}
+
+			e.preventDefault();
+			e.stopImmediatePropagation();
+
+			const num = code - 48; // 1-4
+
+			setQuickChatMenu((prev) => {
+				if (prev === null) {
+					// Root level: open this menu
+					return num;
+				}
+				// Sub-menu level
+				if (num === 4) {
+					// Cancel
+					return null;
+				}
+				// Send the message and close
+				const slotKey = `${prev}-${num}` as QuickChatSlot;
+				const text = quickChat[slotKey];
+				if (text && text.trim()) {
+					sendChat(text);
+				}
+				return null;
+			});
+		};
+
+		window.addEventListener("keydown", onKey, true);
+		return () => window.removeEventListener("keydown", onKey, true);
+	}, [status, room, quickChat, sendChat]);
 
 	// Broadcast our own .srt blob to the room once the WASM is ready
 	// (and again whenever the user picks a different one). Empty body
@@ -530,6 +622,24 @@ export function Game(): JSX.Element {
 							console.warn(`[trail] failed to load peer trail for ${msg.playerId}`, e);
 						}
 					})();
+					return;
+				}
+				case "leaderboard": {
+					setLeaderboardMode("speed");
+					setLeaderboardEntries(msg.entries.map((e) => ({
+						rank: e.rank,
+						name: e.name,
+						value: e.maxSpeed,
+					})));
+					return;
+				}
+				case "rg_leaderboard": {
+					setLeaderboardMode("rg");
+					setLeaderboardEntries(msg.entries.map((e) => ({
+						rank: e.rank,
+						name: e.name,
+						value: e.maxStreak,
+					})));
 					return;
 				}
 				case "tp": {
@@ -710,6 +820,14 @@ export function Game(): JSX.Element {
 				setRgConsecutive((prev) => (prev === rg ? prev : rg));
 				const best = Math.round(abi.getRgBest());
 				setRgBest((prev) => (prev === best ? prev : best));
+				// Auto-submit when streak breaks AND session best beat all-time best.
+				const prevRg = prevRgConsecutiveRef.current;
+				prevRgConsecutiveRef.current = rg;
+				if (!submittedRef.current && prevRg > 0 && rg === 0 && best > 0 && best > allTimeBestRef.current) {
+					allTimeBestRef.current = best;
+					submittedRef.current = true;
+					ws.send({ type: "submit_rg_score", maxStreak: best });
+				}
 			}
 
 			// Hover hit-test only when the cursor is over the canvas.
@@ -779,28 +897,18 @@ export function Game(): JSX.Element {
 
 	// ── Challenge leaderboard helpers ──────────────────────────────────
 
-	const submitScore = useCallback(() => {
-		if (!isChallenge || submittedRef.current) return;
-		const abi = abiRef.current;
-		if (!abi) return;
-		const maxSp = Math.round(abi.getMaxSpeed());
-		if (maxSp <= 0) return;
-		submittedRef.current = true;
-		setSessionMax(maxSp);
-		ws.send({ type: "submit_score", maxSpeed: maxSp });
-	}, [isChallenge, ws]);
+	
 
-	const submitRgScore = (): void => {
-		if (rgBest <= 0) return;
-		ws.send({ type: "submit_rg_score", maxStreak: rgBest });
-		submittedRef.current = true;
-	};
+	
 
 	// Listen for rg_score_ack (server confirms RG score).
 	useEffect(() => {
 		return ws.onMessage((msg: ServerMsg) => {
 			if (msg.type === "rg_score_ack") {
 				setScoreAck({ rank: msg.rank, dailyBest: msg.dailyBest });
+				if (msg.dailyBest > allTimeBestRef.current) {
+					allTimeBestRef.current = msg.dailyBest;
+				}
 			}
 		});
 	}, [ws]);
@@ -842,6 +950,9 @@ export function Game(): JSX.Element {
 		const off = ws.onMessage((msg: ServerMsg) => {
 			if (msg.type === "score_ack") {
 				setScoreAck({ rank: msg.rank, dailyBest: msg.dailyBest });
+				if (msg.dailyBest > allTimeBestRef.current) {
+					allTimeBestRef.current = msg.dailyBest;
+				}
 			}
 		});
 		return off;
@@ -926,16 +1037,7 @@ export function Game(): JSX.Element {
 								Rank #{scoreAck.rank} &middot; all-time best {scoreAck.dailyBest}
 							</div>
 						)}
-						<div className="challenge-buttons">
-							<button
-								type="button"
-								className="challenge-btn"
-								onClick={submitScore}
-								disabled={submittedRef.current || sessionMax <= 0}
-							>
-								{submittedRef.current ? "Submitted" : "Submit Score"}
-							</button>
-						</div>
+						
 					</div>
 				)}
 				{isRgChallenge && status === "ready" && (
@@ -955,16 +1057,7 @@ export function Game(): JSX.Element {
 								Rank #{scoreAck.rank} &middot; all-time best {scoreAck.dailyBest}
 							</div>
 						)}
-						<div className="challenge-buttons">
-							<button
-								type="button"
-								className="challenge-btn"
-								onClick={submitRgScore}
-								disabled={submittedRef.current || rgBest <= 0}
-							>
-								{submittedRef.current ? "Submitted" : "Submit Score"}
-							</button>
-						</div>
+						
 					</div>
 				)}
 				{hovered && (
@@ -978,6 +1071,7 @@ export function Game(): JSX.Element {
 						{hovered.name}
 					</div>
 				)}
+				{status === "ready" && <QuickChatMenu activeMenu={quickChatMenu} quickChat={quickChat} playerColor={rgbToCss(identity.color)} />}
 				{(isChallenge || isRgChallenge) && leaderboardEntries.length > 0 && (
 					<div className="leaderboard-panel">
 						<div className="lb-panel-title">All-Time Top 10</div>

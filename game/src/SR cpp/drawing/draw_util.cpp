@@ -186,6 +186,37 @@ namespace
 		push_vert(v, x2, y2, r, g, b, a);
 	}
 
+	// Draw a small caret/chevron on the player body so the facing
+	// direction is readable. A filled triangle is centered on the
+	// rectangle and points in the facing direction. Color is always
+	// black — the callers set the alpha. All coordinates must be in
+	// screen space (already camera-transformed).
+	inline void draw_facing_indicator(float r, float g, float b, float a,
+		float left, float top, float right, float bottom, int8_t facing)
+	{
+		if (facing == 0) return;
+		const float cx = (left + right) * 0.5f;
+		const float cy = (top + bottom) * 0.5f;
+		const float hw = 6.0f;   // half-width of the caret (tip extension)
+		const float hh = 12.0f;  // half-height of the caret (vertical base)
+		if (facing > 0)
+		{
+			// Right-pointing triangle, centered on body.
+			push_tri(r, g, b, a,
+				cx + hw, cy,       // tip (right)
+				cx - hw, cy - hh,  // top-left
+				cx - hw, cy + hh); // bottom-left
+		}
+		else
+		{
+			// Left-pointing triangle, centered on body.
+			push_tri(r, g, b, a,
+				cx - hw, cy,       // tip (left)
+				cx + hw, cy - hh,  // top-right
+				cx + hw, cy + hh); // bottom-right
+		}
+	}
+
 	void ensure_vbo_capacity(GLsizei needed_verts)
 	{
 		if (needed_verts <= g_state.vbo_capacity_verts) return;
@@ -433,6 +464,17 @@ void draw::draw_player(player* player, const camera& camera)
 		player->get_collision()->get_vertex(0) - camera.position,
 		player->get_collision()->get_vertex(2) - camera.position);
 
+	// Facing indicator — black caret on the player body at 10% opacity.
+	// Uses move_direction so the player keeps facing the last input
+	// direction even when stationary.
+	{
+		const vector tl = player->get_collision()->get_vertex(1) - camera.position;
+		const vector br = player->get_collision()->get_vertex(3) - camera.position;
+draw_facing_indicator(0.0f, 0.0f, 0.0f, 0.2f,
+		tl.x, tl.y, br.x, br.y,
+		static_cast<int8_t>(player->d.move_direction));
+	}
+
 	vector top_left = { (camera.viewport_size.x - 200.0f) / 2, 15.0f };
 
 	draw::draw_rectangle(0.7f, 0.7f, 0.7f, top_left, top_left + vector{ 200.0f, 25.0f });
@@ -656,6 +698,13 @@ void draw::draw_ghost(const net::ghost_state& ghost, const camera& camera)
 	}
 
 	draw_rectangle_a(ghost.color_r, ghost.color_g, ghost.color_b, a, top_left, bot_right);
+
+	// Facing indicator for the ghost — same black caret as the local
+	// player. Keeps the 10 % opacity independent of ghost body alpha
+	// so it reads consistently across all ghosts.
+	draw_facing_indicator(0.0f, 0.0f, 0.0f, 0.2f,
+		top_left.x, top_left.y, bot_right.x, bot_right.y,
+		ghost.facing);
 }
 
 void draw::draw_left_pot_map(const util::level_prep& prep, const camera& camera)

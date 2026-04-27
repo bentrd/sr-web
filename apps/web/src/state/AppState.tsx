@@ -20,6 +20,7 @@ import { randomColor } from "../lobby/color";
 import { type Bindings, loadBindings, saveBindings } from "./bindings";
 import { type Visuals, loadVisuals, saveVisuals, VISUAL_DEFAULTS } from "./visuals";
 import { type SavedTrail, loadSavedTrails, saveSavedTrails } from "./savedTrails";
+import { type QuickChatConfig, loadQuickChat, saveQuickChat } from "./quickChat";
 
 const MAX_CHAT_HISTORY = 80;
 
@@ -144,6 +145,8 @@ export type AppState = {
 	publicRooms: readonly PublicRoomSummary[];
 	subscribePublicRooms: () => void;
 	unsubscribePublicRooms: () => void;
+	quickChat: QuickChatConfig;
+	setQuickChat: (q: QuickChatConfig) => void;
 };
 
 const AppCtx = createContext<AppState | null>(null);
@@ -166,6 +169,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 	const [lastError, setLastError] =
 		useState<{ code: string; message: string } | null>(null);
 	const [publicRooms, setPublicRooms] = useState<readonly PublicRoomSummary[]>([]);
+	const [quickChat, setQuickChatState] = useState<QuickChatConfig>(() => loadQuickChat());
 
 	// Block key events from reaching Emscripten's GLFW shim while a text
 	// input has focus. Emscripten registers `addEventListener("keydown",
@@ -267,6 +271,11 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 		saveSavedTrails(next);
 	};
 
+	const setQuickChat = (next: QuickChatConfig): void => {
+		setQuickChatState(next);
+		saveQuickChat(next);
+	};
+
 	const leaveRoom = (): void => {
 		ws.send({ type: "leave_room" });
 		setRoom(null);
@@ -313,9 +322,11 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 			publicRooms,
 			subscribePublicRooms,
 			unsubscribePublicRooms,
+			quickChat,
+			setQuickChat,
 		}),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[ws, wsStatus, playerId, identity, bindings, targetFps, visuals, savedTrails, room, chat, lastError, publicRooms],
+		[ws, wsStatus, playerId, identity, bindings, targetFps, visuals, savedTrails, room, chat, lastError, publicRooms, quickChat],
 	);
 
 	return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;

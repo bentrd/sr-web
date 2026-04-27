@@ -1190,3 +1190,121 @@ button.primary {
 .lb-panel-me .lb-panel-rank {
 	color: rgba(102, 187, 106, 0.9);
 }
+
+/* ── Quick Chat in-game overlay ── */
+
+.quickchat-menu {
+	position: absolute;
+	bottom: 4.5rem;
+	left: 50%;
+	transform: translateX(-50%);
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 0.4rem 0.8rem;
+	background: rgba(18, 20, 26, 0.92);
+	border: 1px solid var(--border);
+	border-radius: 0.6rem;
+	padding: 0.75rem 1rem;
+	min-width: 16rem;
+	z-index: 40;
+	pointer-events: none;
+	backdrop-filter: blur(6px);
+}
+
+.quickchat-cell {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.2rem 0;
+}
+
+.quickchat-cancel {
+	opacity: 0.5;
+}
+
+.quickchat-key {
+	flex-shrink: 0;
+	width: 1.4rem;
+	height: 1.4rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: #000;
+	border-radius: 0.25rem;
+	font-size: 0.75rem;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.quickchat-text {
+	font-size: 0.85rem;
+	color: rgba(255, 255, 255, 0.9);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* ── Quick Chat config modal ── */
+
+.quickchat-modal-section {
+	margin-top: 1rem;
+	padding-top: 0.75rem;
+	border-top: 1px solid var(--border);
+}
+
+.quickchat-modal-title {
+	font-size: 0.85rem;
+	font-weight: 700;
+	color: var(--accent);
+	margin-bottom: 0.5rem;
+}
+
+.quickchat-modal-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 0.4rem 0.7rem;
+}
+
+.quickchat-modal-cell {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.quickchat-modal-cancel {
+	opacity: 0.5;
+}
+
+.quickchat-modal-key {
+	flex-shrink: 0;
+	width: 1.3rem;
+	height: 1.3rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: #000;
+	border-radius: 0.2rem;
+	font-size: 0.7rem;
+	font-weight: 700;
+}
+
+.quickchat-modal-input {
+	flex: 1;
+	padding: 0.3rem 0.5rem;
+	border: 1px solid var(--border);
+	border-radius: 0.3rem;
+	background: rgba(255, 255, 255, 0.06);
+	color: #fff;
+	font-size: 0.85rem;
+	outline: none;
+	min-width: 0;
+}
+
+.quickchat-modal-input:focus {
+	border-color: var(--accent);
+}
+
+.quickchat-modal-label {
+	font-size: 0.8rem;
+	color: rgba(255, 255, 255, 0.5);
+}

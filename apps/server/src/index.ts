@@ -266,6 +266,17 @@ const server = Bun.serve<WsData, never>({
 						});
 					}
 					ws.data.roomCode = result.code;
+					// Auto-subscribe to the challenge leaderboard pubsub topic
+					// so this client receives live leaderboard updates.
+					if (result.mode === "grapple_challenge" || result.mode === "rg_challenge") {
+						ws.unsubscribe("leaderboard-speed");
+						ws.unsubscribe("leaderboard-rg");
+						if (result.mode === "grapple_challenge") {
+							ws.subscribe("leaderboard-speed");
+						} else {
+							ws.subscribe("leaderboard-rg");
+						}
+					}
 					// Tell everyone in the room (including the new joiner) the new state.
 					store.broadcast(result, store.roomStateMsg(result));
 					// Permanent rooms auto-start when someone joins — broadcast explicitly.
@@ -302,6 +313,8 @@ const server = Bun.serve<WsData, never>({
 					const leaverName = leaver?.name ?? "A player";
 					const remaining = store.leaveRoom(ws.data.playerId, code);
 					ws.data.roomCode = null;
+					ws.unsubscribe("leaderboard-speed");
+					ws.unsubscribe("leaderboard-rg");
 					if (remaining) {
 						store.broadcast(remaining, { type: "player_left", id: ws.data.playerId });
 						store.broadcast(remaining, store.roomStateMsg(remaining));
@@ -516,11 +529,23 @@ const server = Bun.serve<WsData, never>({
 					submitScore(todayDate(), me.name, Math.round(msg.maxSpeed));
 					const rank = allTimeRankForPlayer(me.name);
 					const dailyBest = allTimeBestForPlayer(me.name);
-					return send(ws, {
+					send(ws, {
 						type: "score_ack",
 						rank,
 						dailyBest,
 					});
+					// Broadcast updated global leaderboard to all subscribed clients.
+					const lb = getAllTimeLeaderboard(10);
+					server.publish("leaderboard-speed", JSON.stringify({
+						type: "leaderboard",
+						date: todayDate(),
+						entries: lb.map((e) => ({
+							rank: e.rank,
+							name: e.name,
+							maxSpeed: e.maxSpeed,
+						})),
+					} satisfies import("@sr-web/protocol").Leaderboard));
+					return;
 				}
 
 				case "submit_rg_score": {
@@ -550,7 +575,19 @@ const server = Bun.serve<WsData, never>({
 					submitRgScore(todayDate(), me.name, Math.round(streak));
 					const rank = rgAllTimeRankForPlayer(me.name);
 					const dailyBest = rgAllTimeBestForPlayer(me.name);
-					return send(ws, { type: "rg_score_ack", rank, dailyBest });
+					send(ws, { type: "rg_score_ack", rank, dailyBest });
+					// Broadcast updated global RG leaderboard to all subscribed clients.
+					const lb = getRgAllTimeLeaderboard(10);
+					server.publish("leaderboard-rg", JSON.stringify({
+						type: "rg_leaderboard",
+						date: todayDate(),
+						entries: lb.map((e) => ({
+							rank: e.rank,
+							name: e.name,
+							maxStreak: e.maxStreak,
+						})),
+					} satisfies import("@sr-web/protocol").RgLeaderboard));
+					return;
 				}
 
 				default:
@@ -564,6 +601,8 @@ const server = Bun.serve<WsData, never>({
 
 		close(ws) {
 			store.unsubscribePublic(ws);
+			ws.unsubscribe("leaderboard-speed");
+			ws.unsubscribe("leaderboard-rg");
 			const code = ws.data.roomCode;
 			if (!code) return;
 			const leaverName = store.getRoom(code)?.players.get(ws.data.playerId)?.name ?? "A player";

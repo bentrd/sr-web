@@ -7,6 +7,7 @@ import { MAPS } from "./maps";
 import { ControlsModal } from "./ControlsModal";
 import { OptionsModal } from "./OptionsModal";
 import { ChatPanel } from "./ChatPanel";
+import { QuickChatModal } from "./QuickChatModal";
 
 const SOFT_CAP_WARNING = 12;
 
@@ -17,6 +18,7 @@ export function Room(): JSX.Element {
 		useApp();
 	const [controlsOpen, setControlsOpen] = useState(false);
 	const [optionsOpen, setOptionsOpen] = useState(false);
+	const [quickChatOpen, setQuickChatOpen] = useState(false);
 	const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
 	// If we land directly on /r/CODE without an active room state for that
@@ -99,6 +101,9 @@ export function Room(): JSX.Element {
 					<button type="button" onClick={() => setOptionsOpen(true)}>
 						Options
 					</button>
+					<button type="button" onClick={() => setQuickChatOpen(true)}>
+						Quick Chat
+					</button>
 					<button type="button" onClick={() => { leaveRoom(); navigate("/"); }}>
 						Leave
 					</button>
@@ -107,6 +112,7 @@ export function Room(): JSX.Element {
 				<ChatPanel variant="game" />
 				<ControlsModal open={controlsOpen} onClose={() => setControlsOpen(false)} />
 				<OptionsModal open={optionsOpen} onClose={() => setOptionsOpen(false)} />
+				<QuickChatModal open={quickChatOpen} onClose={() => setQuickChatOpen(false)} />
 			</main>
 		);
 	}
@@ -232,12 +238,21 @@ export function Room(): JSX.Element {
 					Options
 				</button>
 				<span className="status-dot">·</span>
+				<button
+					type="button"
+					className="link-button"
+					onClick={() => setQuickChatOpen(true)}
+				>
+					Quick Chat
+				</button>
+				<span className="status-dot">·</span>
 				server: {wsStatus.kind}
 				{wsStatus.kind === "closed" && ` — ${wsStatus.reason}`}
 			</footer>
 			<ChatPanel variant="lobby" />
 			<ControlsModal open={controlsOpen} onClose={() => setControlsOpen(false)} />
 			<OptionsModal open={optionsOpen} onClose={() => setOptionsOpen(false)} />
+			<QuickChatModal open={quickChatOpen} onClose={() => setQuickChatOpen(false)} />
 		</main>
 	);
 }

@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useApp } from "../state/AppState";
+import type { ServerMsg } from "@sr-web/protocol";
 
 type LeaderboardEntry = { rank: number; name: string; value: number };
 
@@ -23,6 +25,7 @@ function getLeaderboardUrl(path: string): string {
 export function ChallengeLeaderboardCard(): JSX.Element {
 	const [data, setData] = useState<Record<string, LeaderboardEntry[]>>({});
 	const [loading, setLoading] = useState(true);
+	const { ws } = useApp();
 
 	useEffect(() => {
 		let cancelled = false;
@@ -49,8 +52,36 @@ export function ChallengeLeaderboardCard(): JSX.Element {
 			}
 		}
 		void fetchAll();
-		return () => { cancelled = true; };
-	}, []);
+
+		// Live updates via WebSocket — the server publishes global
+		// leaderboard updates whenever anyone submits a score.
+		const off = ws.onMessage((msg: ServerMsg) => {
+			if (msg.type === "leaderboard") {
+				setData((prev) => ({
+					...prev,
+					speed: msg.entries.map((e) => ({
+						rank: e.rank,
+						name: e.name,
+						value: e.maxSpeed,
+					})),
+				}));
+			} else if (msg.type === "rg_leaderboard") {
+				setData((prev) => ({
+					...prev,
+					rg: msg.entries.map((e) => ({
+						rank: e.rank,
+						name: e.name,
+						value: e.maxStreak,
+					})),
+				}));
+			}
+		});
+
+		return () => {
+			cancelled = true;
+			off();
+		};
+	}, [ws]);
 
 	return (
 		<section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
