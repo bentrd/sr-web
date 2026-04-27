@@ -95,6 +95,8 @@ void instance::tick_frame()
 
 	draw();
 
+	m_playground.reset_controller_inputs();
+
 	// limit_rate is a busy-wait — only useful on desktop. The web build
 	// is driven at monitor refresh by emscripten_set_main_loop_arg(0, ...).
 #ifndef __EMSCRIPTEN__

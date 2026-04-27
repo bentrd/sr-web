@@ -320,6 +320,17 @@ extern "C"
 		input_map[static_cast<std::size_t>(action)] = glfw_key;
 	}
 
+	// Set (or clear) a controller input bit for the current frame.
+	// Called by JS each rAF with the current gamepad button/axis state.
+	// Bits are OR-merged with keyboard state in playground::update() and
+	// reset at the end of each tick_frame().
+	void sr_push_controller_input(int action, int pressed)
+	{
+		if (g_inst == nullptr) return;
+		if (action < 0 || action >= static_cast<int>(emu::input_count)) return;
+		g_inst->m_playground.m_controller_inputs[static_cast<std::size_t>(action)] = (pressed != 0);
+	}
+
 	// Snap the local player to (x, y) in WORLD coordinates (i.e. the same
 	// space sr_get_local_snapshot writes). Velocity is preserved — set_position
 	// goes through player::set_position which handles hitbox sync. Used by

@@ -20,6 +20,7 @@ import { rgbToCss } from "../lobby/color";
 import { loadSrModule, type SrModule } from "../wasm/loadModule";
 import { base64ToBytes, bytesToBase64, decodeSnapshot, type DecodedSnapshot } from "./snapshotCodec";
 import { GAME_ACTIONS, eventToBinding } from "../state/bindings";
+import { pollGamepads } from "./gamepad";
 import { speedColor } from "../state/visuals";
 import { loadDefaultTrail, loadTrailFromBytes, bindTrailAbi } from "./trail/loadTrail";
 import { base64ToBytes as srtBase64ToBytes } from "./trail/parseSrt";
@@ -106,6 +107,7 @@ interface CAbi {
 	getLocalSnapshot: () => Uint8Array | null;
 	getPlayerScreenPos: (id: string) => { x: number; y: number } | null;
 	setBinding: (action: number, glfwKey: number) => void;
+	pushControllerInput: (action: number, pressed: number) => void;
 	teleportLocal: (x: number, y: number) => void;
 	resetLocal: () => void;
 	setTargetFps: (fps: number) => void;
@@ -148,6 +150,7 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_get_snap = mod.cwrap("sr_get_local_snapshot", "number", ["number", "number"]);
 	const f_get_pos = mod.cwrap("sr_get_player_screen_pos", "number", ["string", "number", "number"]);
 	const f_set_binding = mod.cwrap("sr_set_binding", null, ["number", "number"]);
+	const f_controller = mod.cwrap("sr_push_controller_input", null, ["number", "number"]);
 	const f_teleport = mod.cwrap("sr_teleport_local", null, ["number", "number"]);
 	const f_reset = mod.cwrap("sr_reset_local", null, []);
 	const f_set_fps = mod.cwrap("sr_set_target_fps", null, ["number"]);
@@ -226,6 +229,9 @@ function bindCAbi(mod: SrModule): CAbi {
 		},
 		setBinding: (action, glfwKey) => {
 			f_set_binding(action, glfwKey);
+		},
+		pushControllerInput: (action, pressed) => {
+			f_controller(action, pressed);
 		},
 		teleportLocal: (x, y) => {
 			f_teleport(x, y);
@@ -872,6 +878,22 @@ export function Game(): JSX.Element {
 		raf = requestAnimationFrame(tick);
 		return () => cancelAnimationFrame(raf);
 	}, [status, room, peerInfo, playerId, hovered, speedometerEnabled, localSpeed]);
+
+	// Poll gamepad state each rAF and push to WASM.
+	useEffect(() => {
+		if (status !== "ready") return;
+		const abi = abiRef.current;
+		if (!abi) return;
+
+		let raf = 0;
+		const poll = (): void => {
+			pollGamepads(abi.pushControllerInput);
+			raf = requestAnimationFrame(poll);
+		};
+		raf = requestAnimationFrame(poll);
+
+		return () => cancelAnimationFrame(raf);
+	}, [status]);
 
 	// Block default browser actions for game keys (space scrolling, etc).
 	useEffect(() => {

@@ -92,7 +92,7 @@ void playground::update_input(const inputs&)
 void playground::update(emu::timespan delta, const inputs& inputs, emu::vector viewport_size)
 {
 	for (size_t i = 0; i < m_state.m_inputs[0].size(); i++)
-		m_state.m_inputs[0][i] = inputs.held_keys[input_map[i]];
+		m_state.m_inputs[0][i] = inputs.held_keys[input_map[i]] || m_controller_inputs[i];
 
 	m_state.update(33333);
 
@@ -202,6 +202,11 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 
 	util::event event = m_helper.get_event(*m_player);
 	m_last_event = event.evt;
+}
+
+void playground::reset_controller_inputs()
+{
+	m_controller_inputs.reset();
 }
 
 void playground::draw(const inputs&)

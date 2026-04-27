@@ -19,6 +19,12 @@ void sr_load_rg_challenge();
 float sr_get_rg_consecutive();
 float sr_get_rg_best();
 void sr_reset_rg_challenge();
+
+// Push a single controller input bit for the current frame.
+// Called from JS each rAF with the current gamepad state.
+// action: emu::input enum index (0=left, 1=right, ..., 7=swap)
+// pressed: 1 for held, 0 for released
+void sr_push_controller_input(int action, int pressed);
 }
 
 #endif

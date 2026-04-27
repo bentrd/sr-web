@@ -52,6 +52,16 @@ struct playground
 	// reset() and never clamped — the display side rounds to int.
 	float m_session_max_speed = 0.0f;
 
+	// Per-frame controller input state pushed by JS via
+	// sr_push_controller_input(). Merged (OR'd) with keyboard state
+	// in update(). Reset at the end of tick_frame() so stale bits
+	// never persist across frames.
+	std::bitset<emu::input_count> m_controller_inputs{};
+
+	// Reset controller bits. Called at the end of tick_frame() after
+	// all sim steps have consumed this frame's input.
+	void reset_controller_inputs();
+
 	playground();
 
 	void init();

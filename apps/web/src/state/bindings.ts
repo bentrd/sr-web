@@ -22,6 +22,75 @@ export const GAME_ACTIONS = [
 	"swap",
 ] as const;
 
+// --- Gamepad bindings (separate from keyboard, both active simultaneously) ---
+
+export type GamepadBinding =
+	| { type: "button"; index: number; label: string }
+	| { type: "axis_neg"; index: number; label: string }
+	| { type: "axis_pos"; index: number; label: string };
+
+export type GamepadBindings = Partial<Record<Action, GamepadBinding>>;
+
+// Standard gamepad mapping (https://w3c.github.io/gamepad/#remapping).
+// Buttons: 0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=LT, 7=RT
+// Axes: 0=LX, 1=LY, 2=RX, 3=RY
+// D-pad: buttons 12-15 (up, down, left, right)
+export const DEFAULT_GAMEPAD_BINDINGS: GamepadBindings = {
+	left:    { type: "axis_neg", index: 0, label: "← Stick" },
+	right:   { type: "axis_pos", index: 0, label: "→ Stick" },
+	jump:    { type: "button",  index: 0, label: "A" },
+	grapple: { type: "button",  index: 2, label: "X" },
+	slide:   { type: "button",  index: 1, label: "B" },
+	boost:   { type: "button",  index: 7, label: "RT" },
+	item:    { type: "button",  index: 4, label: "LB" },
+	swap:    { type: "button",  index: 5, label: "RB" },
+};
+
+const GP_STORAGE_KEY = "sr-web.gamepad-bindings";
+
+function loadGamepadBindings(): GamepadBindings {
+	try {
+		const raw = localStorage.getItem(GP_STORAGE_KEY);
+		if (raw) {
+			const parsed = JSON.parse(raw) as Partial<Record<Action, GamepadBinding>>;
+			const out: GamepadBindings = {};
+			for (const a of ACTIONS) {
+				const v = parsed[a];
+				if (v && (v.type === "button" || v.type === "axis_neg" || v.type === "axis_pos") &&
+					typeof v.index === "number" && v.index >= 0 &&
+					typeof v.label === "string" && v.label.length > 0) {
+					out[a] = v as GamepadBinding;
+				}
+			}
+			return out;
+		}
+	} catch {
+		// fall through
+	}
+	return { ...DEFAULT_GAMEPAD_BINDINGS };
+}
+
+function saveGamepadBindings(gb: GamepadBindings): void {
+	try {
+		localStorage.setItem(GP_STORAGE_KEY, JSON.stringify(gb));
+	} catch {
+		// localStorage may be disabled
+	}
+}
+
+// Module-level cache so the gamepad polling loop can read without
+// going through React state or localStorage on every frame.
+let cachedGamepadBindings: GamepadBindings = loadGamepadBindings();
+
+export function getGamepadBindings(): GamepadBindings {
+	return cachedGamepadBindings;
+}
+
+export function setGamepadBindings(gb: GamepadBindings): void {
+	cachedGamepadBindings = gb;
+	saveGamepadBindings(gb);
+}
+
 // UI actions are handled in JS only (never pushed to WASM).
 export const UI_ACTIONS = ["chat", "reset", "save_state", "load_state"] as const;
 
