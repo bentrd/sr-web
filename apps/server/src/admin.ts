@@ -202,31 +202,48 @@ const ADMIN_HTML = `<!doctype html>
     padding: 6px 14px; border-radius: 6px; cursor: pointer; font: inherit;
   }
   .tabs button.active { background: #2d4a8a; color: #fff; border-color: #3a5fb0; }
-  .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
-  .toolbar input {
+  .toolbar {
+    display: flex; gap: 8px; margin-bottom: 12px;
+    align-items: center; flex-wrap: wrap;
+  }
+  .toolbar input[type="search"] {
     background: #1c1c22; border: 1px solid #2a2a32; color: #e6e6ea;
-    padding: 4px 8px; border-radius: 4px; font: inherit;
+    padding: 4px 10px; border-radius: 4px; font: inherit; min-width: 220px;
   }
   button.action {
     background: #1c1c22; color: #e6e6ea; border: 1px solid #2a2a32;
     padding: 4px 10px; border-radius: 4px; cursor: pointer; font: inherit;
   }
-  button.action:hover { background: #25252d; }
+  button.action:hover:not(:disabled) { background: #25252d; }
+  button.action:disabled { opacity: 0.4; cursor: not-allowed; }
   button.danger { color: #ff7676; border-color: #5a2828; }
-  button.danger:hover { background: #2a1818; }
+  button.danger:hover:not(:disabled) { background: #2a1818; }
   button.primary { background: #2d4a8a; border-color: #3a5fb0; color: #fff; }
-  button.primary:hover { background: #355aa8; }
+  button.primary:hover:not(:disabled) { background: #355aa8; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #1f1f26; }
-  th { color: #888; font-weight: 500; background: #15151b; position: sticky; top: 0; }
-  td input {
+  th, td {
+    padding: 6px 10px; text-align: left;
+    border-bottom: 1px solid #1f1f26; vertical-align: middle;
+  }
+  th { color: #888; font-weight: 500; background: #15151b; position: sticky; top: 0; z-index: 1; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: #e6e6ea; }
+  th .sort-arrow { color: #5fa8ff; margin-left: 4px; }
+  td input[type="text"] {
     width: 100%; background: transparent; border: 1px solid transparent;
     color: inherit; font: inherit; padding: 2px 4px; border-radius: 3px;
   }
-  td input:focus { outline: none; border-color: #3a5fb0; background: #15151b; }
+  td input[type="text"]:focus { outline: none; border-color: #3a5fb0; background: #15151b; }
+  tr.dirty { background: #1c1a14; }
+  tr.dirty td input[type="text"] { border-color: #5a4a1f; }
+  tr.selected { background: #16223a; }
+  tr.dirty.selected { background: #1c2030; }
   .row-actions { white-space: nowrap; }
   .empty { color: #666; padding: 40px; text-align: center; }
   .ts { color: #888; font-size: 12px; }
+  .col-check { width: 32px; text-align: center; }
+  .col-check input { cursor: pointer; }
+  #summary { color: #888; font-size: 12px; }
   #status { margin-left: auto; color: #888; font-size: 12px; }
   #status.error { color: #ff7676; }
   #status.ok { color: #6fdc8c; }
@@ -242,8 +259,12 @@ const ADMIN_HTML = `<!doctype html>
 </div>
 
 <div class="toolbar">
+  <input type="search" id="search" placeholder="Filter by player name…" autocomplete="off" />
   <button class="action primary" id="add">+ Add row</button>
   <button class="action" id="refresh">Refresh</button>
+  <button class="action" id="bulk-save" disabled>Save selected</button>
+  <button class="action danger" id="bulk-delete" disabled>Delete selected</button>
+  <span id="summary"></span>
   <span id="status"></span>
 </div>
 
@@ -267,13 +288,37 @@ const ADMIN_HTML = `<!doctype html>
     rg_scores: ['id', 'date', 'player_name', 'max_streak', 'timestamp'],
     time_scores: ['id', 'date', 'player_name', 'duration_ticks', 'timestamp'],
   };
+  const editableCols = {
+    scores: ['date', 'player_name', 'max_speed', 'timestamp'],
+    rg_scores: ['date', 'player_name', 'max_streak', 'timestamp'],
+    time_scores: ['date', 'player_name', 'duration_ticks', 'timestamp'],
+  };
   const numericCols = new Set(['id', 'max_speed', 'max_streak', 'duration_ticks', 'timestamp']);
 
+  // per-tab state, reset on tab switch / reload
+  let rows = [];
+  let sort = { col: 'id', dir: 'desc' };
+  let filter = '';
+  const selected = new Set();
+  const dirty = new Set();
+
   const statusEl = document.getElementById('status');
+  const summaryEl = document.getElementById('summary');
+  const searchEl = document.getElementById('search');
+  const bulkDeleteEl = document.getElementById('bulk-delete');
+  const bulkSaveEl = document.getElementById('bulk-save');
+  const grid = document.getElementById('grid');
+
   function setStatus(msg, kind) {
     statusEl.textContent = msg || '';
     statusEl.className = kind || '';
     if (kind === 'ok') setTimeout(() => { if (statusEl.textContent === msg) statusEl.textContent = ''; }, 2000);
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   async function api(path, opts = {}) {
@@ -290,52 +335,118 @@ const ADMIN_HTML = `<!doctype html>
 
   function fmtTs(ms) {
     if (!ms) return '';
-    const d = new Date(ms);
+    const d = new Date(Number(ms));
+    if (Number.isNaN(d.getTime())) return '';
     return d.toISOString().replace('T', ' ').slice(0, 19);
+  }
+
+  function compareRows(a, b, col) {
+    const va = a[col], vb = b[col];
+    if (numericCols.has(col)) {
+      const na = Number(va) || 0, nb = Number(vb) || 0;
+      return na - nb;
+    }
+    return String(va ?? '').localeCompare(String(vb ?? ''));
+  }
+
+  function visibleRows() {
+    const f = filter.trim().toLowerCase();
+    let arr = rows.slice();
+    if (f) arr = arr.filter(r => String(r.player_name ?? '').toLowerCase().includes(f));
+    arr.sort((a, b) => {
+      const c = compareRows(a, b, sort.col);
+      return sort.dir === 'asc' ? c : -c;
+    });
+    return arr;
+  }
+
+  function updateSummary() {
+    const view = visibleRows();
+    const parts = [view.length + (rows.length !== view.length ? ' / ' + rows.length : '') + ' rows'];
+    if (dirty.size) parts.push(dirty.size + ' edited');
+    if (selected.size) parts.push(selected.size + ' selected');
+    summaryEl.textContent = parts.join(' · ');
+  }
+
+  function updateBulkUi() {
+    const count = selected.size;
+    bulkDeleteEl.textContent = 'Delete selected' + (count ? ' (' + count + ')' : '');
+    bulkSaveEl.textContent = 'Save selected' + (count ? ' (' + count + ')' : '');
+    bulkDeleteEl.disabled = count === 0;
+    let dirtySelected = 0;
+    selected.forEach(id => { if (dirty.has(id)) dirtySelected++; });
+    bulkSaveEl.disabled = dirtySelected === 0;
   }
 
   async function load() {
     setStatus('loading…');
     try {
-      const rows = await api('/' + table);
-      render(rows);
+      rows = await api('/' + table);
+      dirty.clear();
+      selected.clear();
+      render();
       setStatus(rows.length + ' rows', 'ok');
     } catch (e) {
       setStatus(e.message, 'error');
     }
   }
 
-  function render(rows) {
-    const thead = document.querySelector('#grid thead');
-    const tbody = document.querySelector('#grid tbody');
+  function render() {
+    const thead = grid.querySelector('thead');
+    const tbody = grid.querySelector('tbody');
     const headers = cols[table];
-    thead.innerHTML = '<tr>' + headers.map(c => '<th>' + c + '</th>').join('') + '<th></th></tr>';
-    if (rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="' + (headers.length + 1) + '" class="empty">no rows</td></tr>';
+    const view = visibleRows();
+    const allSelectedVisible = view.length > 0 && view.every(r => selected.has(r.id));
+
+    const arrow = (col) => sort.col === col
+      ? '<span class="sort-arrow">' + (sort.dir === 'asc' ? '▲' : '▼') + '</span>'
+      : '';
+    thead.innerHTML =
+      '<tr>' +
+        '<th class="col-check"><input type="checkbox" id="check-all"' + (allSelectedVisible ? ' checked' : '') + ' /></th>' +
+        headers.map(c => '<th class="sortable" data-sort="' + c + '">' + c + arrow(c) + '</th>').join('') +
+        '<th></th>' +
+      '</tr>';
+
+    if (view.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="' + (headers.length + 2) + '" class="empty">no rows</td></tr>';
+      updateSummary();
+      updateBulkUi();
       return;
     }
-    tbody.innerHTML = rows.map(row => {
+
+    tbody.innerHTML = view.map(row => {
+      const isSel = selected.has(row.id);
+      const isDirty = dirty.has(row.id);
       const cells = headers.map(c => {
         if (c === 'id') return '<td>' + row.id + '</td>';
         if (c === 'timestamp') {
-          return '<td><input data-field="timestamp" data-id="' + row.id + '" value="' + (row.timestamp ?? '') + '" /><div class="ts">' + fmtTs(row.timestamp) + '</div></td>';
+          return '<td><input type="text" data-field="timestamp" data-id="' + row.id + '" value="' + escapeHtml(row.timestamp ?? '') + '" /><div class="ts">' + escapeHtml(fmtTs(row.timestamp)) + '</div></td>';
         }
         const v = row[c] ?? '';
-        return '<td><input data-field="' + c + '" data-id="' + row.id + '" value="' + String(v).replace(/"/g, '&quot;') + '" /></td>';
+        return '<td><input type="text" data-field="' + c + '" data-id="' + row.id + '" value="' + escapeHtml(v) + '" /></td>';
       }).join('');
-      return '<tr data-id="' + row.id + '">' + cells +
+      const cls = [isDirty ? 'dirty' : '', isSel ? 'selected' : ''].filter(Boolean).join(' ');
+      return '<tr class="' + cls + '" data-id="' + row.id + '">' +
+        '<td class="col-check"><input type="checkbox" data-check="' + row.id + '"' + (isSel ? ' checked' : '') + ' /></td>' +
+        cells +
         '<td class="row-actions">' +
           '<button class="action" data-save="' + row.id + '">Save</button> ' +
           '<button class="action danger" data-del="' + row.id + '">Delete</button>' +
         '</td></tr>';
     }).join('');
+
+    updateSummary();
+    updateBulkUi();
   }
 
   function collectRow(id) {
-    const inputs = document.querySelectorAll('input[data-id="' + id + '"]');
+    const inputs = grid.querySelectorAll('input[data-id="' + id + '"]');
     const out = {};
+    const fields = editableCols[table];
     inputs.forEach(i => {
       const field = i.dataset.field;
+      if (!fields.includes(field)) return;
       let v = i.value;
       if (numericCols.has(field)) v = Number(v);
       out[field] = v;
@@ -343,27 +454,97 @@ const ADMIN_HTML = `<!doctype html>
     return out;
   }
 
-  document.addEventListener('click', async (e) => {
+  async function saveRow(id) {
+    const body = collectRow(id);
+    delete body.id;
+    await api('/' + table + '/' + id, { method: 'PATCH', body: JSON.stringify(body) });
+    dirty.delete(id);
+    const idx = rows.findIndex(r => r.id === id);
+    if (idx >= 0) rows[idx] = { ...rows[idx], ...body };
+  }
+
+  async function deleteRow(id) {
+    await api('/' + table + '/' + id, { method: 'DELETE' });
+    rows = rows.filter(r => r.id !== id);
+    dirty.delete(id);
+    selected.delete(id);
+  }
+
+  // Click handler: row Save/Delete buttons + sortable header
+  grid.addEventListener('click', async (e) => {
     const t = e.target;
     if (!(t instanceof HTMLElement)) return;
+
     const saveId = t.dataset.save;
-    const delId = t.dataset.del;
     if (saveId) {
-      try {
-        const body = collectRow(saveId);
-        delete body.id;
-        await api('/' + table + '/' + saveId, { method: 'PATCH', body: JSON.stringify(body) });
-        setStatus('saved #' + saveId, 'ok');
-      } catch (err) { setStatus(err.message, 'error'); }
+      try { await saveRow(Number(saveId)); setStatus('saved #' + saveId, 'ok'); render(); }
+      catch (err) { setStatus(err.message, 'error'); }
+      return;
     }
+
+    const delId = t.dataset.del;
     if (delId) {
       if (!confirm('Delete row ' + delId + '?')) return;
-      try {
-        await api('/' + table + '/' + delId, { method: 'DELETE' });
-        setStatus('deleted #' + delId, 'ok');
-        await load();
-      } catch (err) { setStatus(err.message, 'error'); }
+      try { await deleteRow(Number(delId)); setStatus('deleted #' + delId, 'ok'); render(); }
+      catch (err) { setStatus(err.message, 'error'); }
+      return;
     }
+
+    const th = t.closest('th.sortable');
+    if (th) {
+      const col = th.dataset.sort;
+      if (!col) return;
+      if (sort.col === col) sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
+      else { sort.col = col; sort.dir = numericCols.has(col) ? 'desc' : 'asc'; }
+      render();
+    }
+  });
+
+  // Change handler: master + per-row checkboxes
+  grid.addEventListener('change', (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLInputElement)) return;
+    if (t.id === 'check-all') {
+      const view = visibleRows();
+      if (t.checked) view.forEach(r => selected.add(r.id));
+      else view.forEach(r => selected.delete(r.id));
+      render();
+      return;
+    }
+    const checkId = t.dataset.check;
+    if (checkId) {
+      const id = Number(checkId);
+      if (t.checked) selected.add(id); else selected.delete(id);
+      const tr = grid.querySelector('tr[data-id="' + id + '"]');
+      if (tr) tr.classList.toggle('selected', t.checked);
+      // sync master checkbox without full re-render so input focus is preserved
+      const view = visibleRows();
+      const master = grid.querySelector('#check-all');
+      if (master) master.checked = view.length > 0 && view.every(r => selected.has(r.id));
+      updateSummary();
+      updateBulkUi();
+    }
+  });
+
+  // Input handler: dirty tracking (no re-render — would steal focus while typing)
+  grid.addEventListener('input', (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLInputElement)) return;
+    const idStr = t.dataset.id;
+    if (!idStr) return;
+    const id = Number(idStr);
+    if (!dirty.has(id)) {
+      dirty.add(id);
+      const tr = grid.querySelector('tr[data-id="' + id + '"]');
+      if (tr) tr.classList.add('dirty');
+      updateSummary();
+      updateBulkUi();
+    }
+  });
+
+  searchEl.addEventListener('input', () => {
+    filter = searchEl.value;
+    render();
   });
 
   document.getElementById('refresh').addEventListener('click', load);
@@ -388,9 +569,39 @@ const ADMIN_HTML = `<!doctype html>
     } catch (err) { setStatus(err.message, 'error'); }
   });
 
+  bulkDeleteEl.addEventListener('click', async () => {
+    if (selected.size === 0) return;
+    if (!confirm('Delete ' + selected.size + ' selected row(s)? This cannot be undone.')) return;
+    const ids = [...selected];
+    setStatus('deleting ' + ids.length + '…');
+    let ok = 0, fail = 0;
+    for (const id of ids) {
+      try { await deleteRow(id); ok++; } catch (e) { fail++; }
+    }
+    render();
+    setStatus('deleted ' + ok + (fail ? ', ' + fail + ' failed' : ''), fail ? 'error' : 'ok');
+  });
+
+  bulkSaveEl.addEventListener('click', async () => {
+    const ids = [...selected].filter(id => dirty.has(id));
+    if (ids.length === 0) return;
+    setStatus('saving ' + ids.length + '…');
+    let ok = 0, fail = 0;
+    for (const id of ids) {
+      try { await saveRow(id); ok++; } catch (e) { fail++; }
+    }
+    render();
+    setStatus('saved ' + ok + (fail ? ', ' + fail + ' failed' : ''), fail ? 'error' : 'ok');
+  });
+
   const tabIds = ['tab-scores', 'tab-rg', 'tab-time'];
   function activate(id, t) {
     table = t;
+    sort = { col: 'id', dir: 'desc' };
+    filter = '';
+    searchEl.value = '';
+    selected.clear();
+    dirty.clear();
     for (const tid of tabIds) {
       document.getElementById(tid).classList.toggle('active', tid === id);
     }
