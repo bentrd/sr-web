@@ -457,6 +457,29 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 		}
 	}
 
+	// Time-mode arm-time savestate is captured before the sim has run at
+	// all, so it reflects "spawned mid-air" rather than "settled on the
+	// floor". After a few waiting frames the in-game player has fallen the
+	// last few pixels onto the ground; if we replayed from the original
+	// arm-time savestate the validator's player would still be mid-air at
+	// tick 0 and miss every jump. Recapture the savestate the very tick
+	// the player first presses anything — before this frame's sim step —
+	// so client and server start the replay from byte-identical state.
+	if (m_run_recorder.active && m_run_recorder.waiting_for_input
+		&& input_bitmask != 0)
+	{
+		m_run_recorder.waiting_for_input = false;
+		m_run_recorder.savestate.assign(64 * 1024, 0u);
+		const std::size_t n = capture_savestate(
+			m_run_recorder.savestate.data(),
+			m_run_recorder.savestate.size());
+		if (n > 0)
+		{
+			m_run_recorder.savestate_size = n;
+			m_run_recorder.savestate.resize(n);
+		}
+	}
+
 	m_state.update(33333);
 
 	// --- RG Challenge detection ---
@@ -481,15 +504,8 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 	//     k_ground_grace_ticks consecutive ticks (after airborne).
 	//   rg_challenge      — RG counter goes from >0 to 0, OR ground touch
 	//     (after airborne).
-	// Input gate (time_challenge only): clear waiting_for_input the first
-	// time the player issues any input. While waiting we skip the recorder
-	// block entirely — no global_tick advance, no log entries, no run-end
-	// check — so the timer effectively starts on the player's first action.
-	if (m_run_recorder.active && m_run_recorder.waiting_for_input
-		&& input_bitmask != 0)
-	{
-		m_run_recorder.waiting_for_input = false;
-	}
+	// (waiting_for_input gate is cleared above, before m_state.update,
+	//  so the same frame's sim step matches the validator's tick 0.)
 
 	if ((m_game_mode == emu::GameMode::grapple_challenge ||
 		 m_game_mode == emu::GameMode::rg_challenge ||
