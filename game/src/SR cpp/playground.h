@@ -55,8 +55,14 @@ struct run_recorder
 	// True after a floor-touch-after-airborne event, until JS samples it.
 	// Cleared by JS-side consume call; recorder keeps running.
 	bool finished = false;
+	// Has the player been on the ground at least once since the recording
+	// started? Required before `has_been_airborne` can flip — without this
+	// gate, the spawn-fall landing would fire `finished` immediately. A
+	// run only "begins" once the player is settled on the ground.
+	bool has_been_grounded = false;
 	// Have we left the ground at least once since the recording started or
 	// the last `finished` event was raised? Gate for the next `finished`.
+	// Only flips to true after `has_been_grounded` is set.
 	bool has_been_airborne = false;
 	// First sim tick of an active recording — seeds the log with the
 	// initial bitmask at delta=0 so the replay knows the starting state.

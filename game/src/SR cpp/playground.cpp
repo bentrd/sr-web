@@ -26,6 +26,7 @@ void run_recorder::clear()
 {
 	active = false;
 	finished = false;
+	has_been_grounded = false;
 	has_been_airborne = false;
 	first_tick = true;
 	start_tick = 0;
@@ -354,10 +355,13 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 			rec.last_bitmask = input_bitmask;
 		}
 
-		// Track airborne state — floor touch only fires `finished` after
-		// the player has actually left the ground at least once since the
-		// last submission, so spawn-on-floor doesn't immediately submit.
-		if (!is_on_ground) rec.has_been_airborne = true;
+		// Track grounded → airborne progression. `has_been_grounded` must
+		// flip first (the player must touch the ground at least once
+		// before we'll consider their next airborne→ground transition a
+		// completed run). Without this gate the spawn-fall landing would
+		// fire `finished` immediately at level-load.
+		if (is_on_ground) rec.has_been_grounded = true;
+		if (rec.has_been_grounded && !is_on_ground) rec.has_been_airborne = true;
 
 		// Run-end trigger: the player must be on the ground AND not in a
 		// swing/grapple state continuously for k_ground_grace_ticks.
