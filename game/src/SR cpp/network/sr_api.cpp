@@ -111,6 +111,43 @@ extern "C"
 		g_inst->m_playground.m_ghosts.clear();
 	}
 
+	void sr_load_time_challenge()
+	{
+		if (g_inst == nullptr) return;
+		g_inst->m_playground.load_time_challenge();
+		g_inst->m_playground.m_ghosts.clear();
+	}
+
+	void sr_reset_time_challenge()
+	{
+		if (g_inst == nullptr) return;
+		auto& pg = g_inst->m_playground;
+		emu::player* p = pg.m_player;
+		if (p != nullptr && p->d.is_grappling && p->m_grapple != nullptr)
+			p->cancel_grapple();
+		pg.reset();
+		if (p != nullptr)
+		{
+			p->d.boost = 0.0f;
+			p->d.boost_cooldown = 0.0f;
+			p->d.super_boost_force = emu::vec_zero;
+			p->d.super_boost_direction = emu::vec_zero;
+			p->update_hitboxes();
+		}
+		pg.m_camera.position = (p != nullptr && p->m_actor != nullptr)
+			? p->m_actor->d.position - pg.m_camera.viewport_size / 2.0f
+			: emu::vec_zero;
+	}
+
+	unsigned int sr_time_run_elapsed_ticks()
+	{
+		if (g_inst == nullptr) return 0;
+		const auto& rec = g_inst->m_playground.m_run_recorder;
+		if (!rec.active) return 0;
+		const std::uint64_t t = rec.global_tick;
+		return static_cast<unsigned int>(t > 0xffffffffull ? 0xffffffffull : t);
+	}
+
 	float sr_get_rg_consecutive()
 	{
 		if (g_inst == nullptr) return 0.0f;

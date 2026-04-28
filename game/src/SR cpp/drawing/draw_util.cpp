@@ -672,6 +672,47 @@ void draw::draw_rg_grid(const camera& camera, float min_world_y, float max_world
 	}
 }
 
+void draw::draw_time_goal(const camera& camera,
+	float world_x_start, float world_x_end,
+	float min_world_y, float max_world_y)
+{
+	// Glowing gold band layered with three alpha steps so the inner band
+	// reads as a finish line and the outer falloff fades into the corridor.
+	// Pure rectangles — no per-tile work like draw_rg_grid does — because
+	// the goal is a single screen-aligned strip.
+	const float vw = camera.viewport_size.x;
+	const float vh = camera.viewport_size.y;
+	const float left = camera.position.x;
+	const float top = camera.position.y;
+
+	const float band_min_y = std::max(min_world_y, top);
+	const float band_max_y = std::min(max_world_y, top + vh);
+	if (!(band_max_y > band_min_y)) return;
+
+	const float screen_y0 = band_min_y - top;
+	const float screen_y1 = band_max_y - top;
+
+	// Cull early when the band is entirely off-screen left/right.
+	if (world_x_end <= left) return;
+	if (world_x_start >= left + vw) return;
+
+	const float screen_x0 = world_x_start - left;
+	const float screen_x1 = world_x_end - left;
+
+	constexpr float k_r = 1.00f, k_g = 0.82f, k_b = 0.20f;
+
+	// Solid inner band (full width of [start, end]).
+	draw_rectangle_a(k_r, k_g, k_b, 0.30f,
+		vector{ screen_x0, screen_y0 },
+		vector{ screen_x1, screen_y1 });
+
+	// Vertical glowing edge at the goal line itself (right side of the
+	// band) — 4 wu wide so it reads even at zoom-out distances.
+	draw_rectangle_a(k_r, k_g, k_b, 0.55f,
+		vector{ screen_x1 - 4.0f, screen_y0 },
+		vector{ screen_x1, screen_y1 });
+}
+
 void draw::draw_right_pot_map(const util::level_prep& prep, const camera& camera)
 {
 	std::size_t width = prep.m_level->m_tile_layer.m_width;

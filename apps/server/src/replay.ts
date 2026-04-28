@@ -26,6 +26,13 @@ interface ReplayModule {
 		savestatePtr: number,
 		savestateLen: number,
 	) => number;
+	_sr_replay_time_run: (
+		logPtr: number,
+		logLen: number,
+		durationTicks: number,
+		savestatePtr: number,
+		savestateLen: number,
+	) => number;
 	_malloc: (size: number) => number;
 	_free: (ptr: number) => void;
 	HEAPU8: Uint8Array;
@@ -192,5 +199,81 @@ export async function replayRgRun(
 // server (e.g. a streak that increments on the same tick the snapshot
 // is taken).
 export function streakMatches(claimed: number, actual: number): boolean {
+	return Math.abs(claimed - actual) <= 1;
+}
+
+export interface TimeReplayResult {
+	ok: boolean;
+	durationTicks: number; // tick at which goal was reached, or 0 if never
+	error?: string;
+}
+
+// Time-mode counterpart to replayRun / replayRgRun. Replays the input
+// log and returns the tick at which the player's right edge first
+// crossed the goal threshold. Returns 0 if the goal was never reached
+// in the allotted ticks (treated as a failed run on the server side).
+//
+// The savestate restores the player's full physics pose at arm time so
+// the replay anchors at the exact starting point the run was recorded
+// against — typically PlayerStart on a fresh load, but supports
+// mid-session arms for symmetry with the other modes.
+export async function replayTimeRun(
+	inputs: Uint8Array,
+	durationTicks: number,
+	savestate: Uint8Array,
+): Promise<TimeReplayResult> {
+	if (inputs.length === 0) return { ok: false, durationTicks: 0, error: "empty inputs" };
+	if (savestate.length === 0) return { ok: false, durationTicks: 0, error: "empty savestate" };
+	if (!Number.isInteger(durationTicks) || durationTicks <= 0) {
+		return { ok: false, durationTicks: 0, error: "invalid durationTicks" };
+	}
+
+	let mod: ReplayModule;
+	try {
+		mod = await loadModule();
+	} catch (e) {
+		return {
+			ok: false,
+			durationTicks: 0,
+			error: e instanceof Error ? `module load: ${e.message}` : "module load failed",
+		};
+	}
+
+	let logPtr = 0;
+	let ssPtr = 0;
+	try {
+		logPtr = mod._malloc(inputs.length);
+		if (!logPtr) return { ok: false, durationTicks: 0, error: "malloc failed" };
+		mod.HEAPU8.set(inputs, logPtr);
+
+		ssPtr = mod._malloc(savestate.length);
+		if (!ssPtr) return { ok: false, durationTicks: 0, error: "savestate malloc failed" };
+		mod.HEAPU8.set(savestate, ssPtr);
+
+		const ticks = mod._sr_replay_time_run(
+			logPtr, inputs.length, durationTicks, ssPtr, savestate.length,
+		);
+		if (!Number.isInteger(ticks) || ticks < 0) {
+			return { ok: false, durationTicks: 0, error: "invalid duration" };
+		}
+		return { ok: true, durationTicks: ticks };
+	} catch (e) {
+		return {
+			ok: false,
+			durationTicks: 0,
+			error: e instanceof Error ? e.message : "replay crashed",
+		};
+	} finally {
+		if (logPtr) mod._free(logPtr);
+		if (ssPtr) mod._free(ssPtr);
+	}
+}
+
+// Time replay must reproduce the claimed duration EXACTLY (sim is
+// deterministic on the same WASM bytecode). ±1 tick absorbs the off-by-one
+// between client and server in case the trigger fires on a slightly
+// different sim step due to ordering of update + state snapshot.
+export function timeMatches(claimed: number, actual: number): boolean {
+	if (actual <= 0) return false; // 0 means "never reached the goal"
 	return Math.abs(claimed - actual) <= 1;
 }

@@ -81,6 +81,15 @@ namespace draw
 	// sits behind tiles).
 	void draw_rg_grid(const camera& camera, float min_world_y, float max_world_y);
 
+	// Highlight band marking the time-challenge goal line. Drawn behind
+	// the wall so the wall tile reads as the actual stop, with a glowing
+	// vertical strip just before it cueing "you're at the end". Both
+	// world-space x bounds describe a vertical region; the band is
+	// clipped to the corridor interior given by [min_world_y, max_world_y].
+	void draw_time_goal(const camera& camera,
+		float world_x_start, float world_x_end,
+		float min_world_y, float max_world_y);
+
 	// Render a single remote-player snapshot at half-alpha. Phase 4d.
 	void draw_ghost(const net::ghost_state& ghost, const camera& camera);
 }

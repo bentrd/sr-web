@@ -17,9 +17,17 @@ import {
 	markRgRunVerified,
 	getRunById,
 	getRgRunById,
+	submitTimeScore,
+	getTimeAllTimeLeaderboard,
+	timeAllTimeBestForPlayer,
+	timeAllTimeRankForPlayer,
+	submitTimeRun,
+	markTimeRunVerified,
+	deleteTimeRunsForPlayer,
+	getTimeRunById,
 } from "./leaderboard";
 import { handleAdminRequest } from "./admin";
-import { replayRun, speedMatches, replayRgRun, streakMatches } from "./replay";
+import { replayRun, speedMatches, replayRgRun, streakMatches, replayTimeRun, timeMatches } from "./replay";
 
 const PORT = Number(process.env.PORT ?? 4000);
 
@@ -69,6 +77,12 @@ store.createPermanentRoom("RGCH1", "rg_challenge", {
 	isPublic: true,
 	mode: "rg_challenge",
 });
+store.createPermanentRoom("RACE1", "time_challenge", {
+	displayName: "Time Challenge",
+	maxPlayers: -1,
+	isPublic: true,
+	mode: "time_challenge",
+});
 
 // Rate-limit: playerId → last submit timestamp
 const scoreCooldowns = new Map<string, number>();
@@ -115,7 +129,7 @@ function validColor(c: unknown): c is RGB {
 }
 
 function validMode(m: unknown): m is GameMode {
-	return m === "standard" || m === "grapple_challenge" || m === "rg_challenge";
+	return m === "standard" || m === "grapple_challenge" || m === "rg_challenge" || m === "time_challenge";
 }
 
 function todayDate(): string {
@@ -159,6 +173,15 @@ const server = Bun.serve<WsData, never>({
 		if (url.pathname === "/rg-leaderboard" && req.method === "GET") {
 			const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 10)));
 			const entries = getRgAllTimeLeaderboard(limit);
+			return corsResponse(JSON.stringify(entries), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+
+		if (url.pathname === "/time-leaderboard" && req.method === "GET") {
+			const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 10)));
+			const entries = getTimeAllTimeLeaderboard(limit);
 			return corsResponse(JSON.stringify(entries), {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
@@ -214,6 +237,32 @@ const server = Bun.serve<WsData, never>({
 				verified: run.verified,
 				timestamp: run.timestamp,
 				mode: "rg_challenge",
+				inputs: Buffer.from(run.inputs).toString("base64"),
+				savestate: Buffer.from(run.savestate).toString("base64"),
+			}), {
+				headers: { "content-type": "application/json", "cache-control": "public, max-age=300" },
+			});
+		}
+
+		const timeRunMatch = url.pathname.match(/^\/time-run\/(\d+)$/);
+		if (timeRunMatch && req.method === "GET") {
+			const id = Number(timeRunMatch[1]);
+			const run = getTimeRunById(id);
+			if (!run) {
+				return corsResponse(JSON.stringify({ error: "not_found" }), {
+					status: 404,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return corsResponse(JSON.stringify({
+				id: run.id,
+				playerName: run.playerName,
+				claimedDurationTicks: run.claimedDurationTicks,
+				durationTicks: run.claimedDurationTicks,
+				simVersion: run.simVersion,
+				verified: run.verified,
+				timestamp: run.timestamp,
+				mode: "time_challenge",
 				inputs: Buffer.from(run.inputs).toString("base64"),
 				savestate: Buffer.from(run.savestate).toString("base64"),
 			}), {
@@ -344,13 +393,20 @@ const server = Bun.serve<WsData, never>({
 					ws.data.roomCode = result.code;
 					// Auto-subscribe to the challenge leaderboard pubsub topic
 					// so this client receives live leaderboard updates.
-					if (result.mode === "grapple_challenge" || result.mode === "rg_challenge") {
+					if (
+						result.mode === "grapple_challenge" ||
+						result.mode === "rg_challenge" ||
+						result.mode === "time_challenge"
+					) {
 						ws.unsubscribe("leaderboard-speed");
 						ws.unsubscribe("leaderboard-rg");
+						ws.unsubscribe("leaderboard-time");
 						if (result.mode === "grapple_challenge") {
 							ws.subscribe("leaderboard-speed");
-						} else {
+						} else if (result.mode === "rg_challenge") {
 							ws.subscribe("leaderboard-rg");
+						} else {
+							ws.subscribe("leaderboard-time");
 						}
 					}
 					// Tell everyone in the room (including the new joiner) the new state.
@@ -391,6 +447,7 @@ const server = Bun.serve<WsData, never>({
 					ws.data.roomCode = null;
 					ws.unsubscribe("leaderboard-speed");
 					ws.unsubscribe("leaderboard-rg");
+					ws.unsubscribe("leaderboard-time");
 					if (remaining) {
 						store.broadcast(remaining, { type: "player_left", id: ws.data.playerId });
 						store.broadcast(remaining, store.roomStateMsg(remaining));
@@ -968,6 +1025,161 @@ const server = Bun.serve<WsData, never>({
 					return;
 				}
 
+				case "submit_time_run": {
+					// Time-mode counterpart to submit_run / submit_rg_run.
+					// Stores the input log + claimed durationTicks, then runs
+					// a deterministic replay to flip the verified flag.
+					if (!ws.data.roomCode) return;
+					const room = store.getRoom(ws.data.roomCode);
+					if (!room || room.mode !== "time_challenge") return;
+					const me = room.players.get(ws.data.playerId);
+					if (!me) return;
+
+					const m = msg as {
+						claimedDurationTicks: number;
+						durationTicks: number;
+						simVersion: number;
+						inputs: string;
+						savestate: string;
+					};
+					if (
+						typeof m.claimedDurationTicks !== "number" ||
+						!Number.isInteger(m.claimedDurationTicks) ||
+						m.claimedDurationTicks <= 0 ||
+						m.claimedDurationTicks > RUN_DURATION_TICKS_MAX
+					) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "claimedDurationTicks must be a positive integer",
+						});
+					}
+					if (
+						typeof m.durationTicks !== "number" ||
+						!Number.isInteger(m.durationTicks) ||
+						m.durationTicks <= 0 ||
+						m.durationTicks > RUN_DURATION_TICKS_MAX
+					) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "durationTicks out of range",
+						});
+					}
+					if (typeof m.simVersion !== "number" || !Number.isInteger(m.simVersion) || m.simVersion < 1) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "simVersion required",
+						});
+					}
+					if (typeof m.inputs !== "string" || m.inputs.length === 0 || m.inputs.length > RUN_INPUT_B64_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "inputs must be base64 string under cap",
+						});
+					}
+					if (typeof m.savestate !== "string" || m.savestate.length === 0 || m.savestate.length > SAVESTATE_B64_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "savestate must be base64 string under cap",
+						});
+					}
+					let raw: Uint8Array;
+					try {
+						raw = Uint8Array.from(atob(m.inputs), (c) => c.charCodeAt(0));
+					} catch {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "inputs base64 decode failed",
+						});
+					}
+					if (raw.length === 0 || raw.length > RUN_INPUT_RAW_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "inputs raw size out of range",
+						});
+					}
+					let savestate: Uint8Array;
+					try {
+						savestate = Uint8Array.from(atob(m.savestate), (c) => c.charCodeAt(0));
+					} catch {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "savestate base64 decode failed",
+						});
+					}
+					if (savestate.length === 0 || savestate.length > SAVESTATE_RAW_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "savestate raw size out of range",
+						});
+					}
+
+					// Time mode keeps only verified PB runs in the DB. Rejected
+					// or non-PR submissions are dropped before any write — no
+					// stranded `verified=-1` rows, no orphan blobs from older
+					// PBs (see deleteTimeRunsForPlayer).
+					const playerName = me.name;
+					const claimed = m.claimedDurationTicks;
+					void replayTimeRun(raw, m.durationTicks, savestate).then((res) => {
+						if (!res.ok) return;
+						if (!timeMatches(m.claimedDurationTicks, res.durationTicks)) return;
+						// Server-truth PR check before touching the DB.
+						const prior = timeAllTimeBestForPlayer(playerName);
+						if (prior > 0 && claimed >= prior) return;
+						let timeRunId = 0;
+						try {
+							deleteTimeRunsForPlayer(playerName);
+							timeRunId = submitTimeRun(
+								todayDate(),
+								playerName,
+								claimed,
+								m.simVersion,
+								raw,
+								savestate,
+							);
+							markTimeRunVerified(timeRunId, 1);
+						} catch {
+							return;
+						}
+						let isPR = false;
+						try {
+							isPR = submitTimeScore(todayDate(), playerName, claimed);
+						} catch {
+							return;
+						}
+						if (!isPR) return;
+						const lb = getTimeAllTimeLeaderboard(10);
+						server.publish("leaderboard-time", JSON.stringify({
+							type: "time_leaderboard",
+							date: todayDate(),
+							entries: lb.map((e) => ({
+								rank: e.rank,
+								name: e.name,
+								durationTicks: e.durationTicks,
+								runId: e.runId,
+							})),
+						} satisfies import("@sr-web/protocol").TimeLeaderboard));
+						try {
+							send(ws, {
+								type: "time_score_ack",
+								rank: timeAllTimeRankForPlayer(playerName),
+								bestTicks: timeAllTimeBestForPlayer(playerName),
+							});
+						} catch {
+							// disconnected — fine.
+						}
+					}).catch(() => {});
+					return;
+				}
+
 				default:
 					send(ws, {
 						type: "error",
@@ -981,6 +1193,7 @@ const server = Bun.serve<WsData, never>({
 			store.unsubscribePublic(ws);
 			ws.unsubscribe("leaderboard-speed");
 			ws.unsubscribe("leaderboard-rg");
+			ws.unsubscribe("leaderboard-time");
 			const code = ws.data.roomCode;
 			if (!code) return;
 			const leaverName = store.getRoom(code)?.players.get(ws.data.playerId)?.name ?? "A player";

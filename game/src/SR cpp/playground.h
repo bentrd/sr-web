@@ -77,6 +77,11 @@ struct run_recorder
 	// First-tick sentinel: when true, the next update() seeds the log
 	// with the starting bitmask at delta=0 and captures the savestate.
 	bool first_tick = true;
+	// Time-challenge "press any key to start" gate. arm_recorder sets
+	// this true for time_challenge so the timer doesn't tick until the
+	// player issues input. Always false for speed/RG modes — they begin
+	// counting from the moment the recorder arms.
+	bool waiting_for_input = false;
 
 	// Edge detection helper for has_been_airborne.
 	bool was_on_ground_prev = true;
@@ -236,6 +241,11 @@ struct playground
 	void load_challenge();
 	// Load the same procedural corridor as load_challenge() but in RG mode.
 	void load_rg_challenge();
+	// Load a fixed-length 30,000 wu corridor with the player anchored at
+	// the left wall. Run-end is the player's right edge crossing the
+	// goal line (the right wall) after at least one airborne→ground
+	// transition. The recorder's duration_ticks IS the run's time.
+	void load_time_challenge();
 	// Reset RG Challenge streak and detection state.
 	void reset_rg_state();
 	void reset();
@@ -245,11 +255,11 @@ struct playground
 	void draw(const inputs& inputs);
 
 	// Start playing back a recorded run. mode 0 = grapple_challenge,
-	// mode 1 = rg_challenge. Regenerates the corresponding procedural
-	// corridor, then restores the player from `savestate` (so playback
-	// starts in the exact mid-session pose the run was recorded against,
-	// not at PlayerStart). Returns false on malformed log, unsupported
-	// mode, or savestate that fails validation.
+	// mode 1 = rg_challenge, mode 2 = time_challenge. Regenerates the
+	// corresponding procedural corridor, then restores the player from
+	// `savestate` (so playback starts in the exact mid-session pose the
+	// run was recorded against, not at PlayerStart). Returns false on
+	// malformed log, unsupported mode, or savestate that fails validation.
 	bool start_replay(const std::uint8_t* log, std::size_t len,
 		std::uint64_t duration_ticks, int mode,
 		const std::uint8_t* savestate, std::size_t savestate_len);

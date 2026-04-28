@@ -16,6 +16,7 @@ export function App(): JSX.Element {
 					<Route path="/r/:code" element={<Room />} />
 					<Route path="/challenge/speed" element={<ChallengeJoin code="SPEED" />} />
 					<Route path="/challenge/rg" element={<ChallengeJoin code="RGCH1" />} />
+					<Route path="/challenge/time" element={<ChallengeJoin code="RACE1" />} />
 					<Route path="*" element={<Navigate to="/" replace />} />
 				</Routes>
 			</HashRouter>

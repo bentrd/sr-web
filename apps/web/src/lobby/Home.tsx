@@ -25,7 +25,7 @@ export function Home(): JSX.Element {
 
 	const [mode, setMode] = useState<GameMode>("standard");
 	const [modeCategory, setModeCategory] = useState<"default" | "challenge">("default");
-	const [challengeType, setChallengeType] = useState<"grapple_challenge" | "rg_challenge">("grapple_challenge");
+	const [challengeType, setChallengeType] = useState<"grapple_challenge" | "rg_challenge" | "time_challenge">("grapple_challenge");
 	const [mapId, setMapId] = useState<string>(MAPS[0]?.id ?? "");
 	const [joinCode, setJoinCode] = useState<string>("");
 	const [controlsOpen, setControlsOpen] = useState(false);
@@ -71,6 +71,7 @@ export function Home(): JSX.Element {
 		const actualMapId =
 			mode === "grapple_challenge" ? "grapple_challenge" :
 			mode === "rg_challenge" ? "rg_challenge" :
+			mode === "time_challenge" ? "time_challenge" :
 			mapId;
 		ws.send({
 			type: "create_room",
@@ -242,7 +243,7 @@ export function Home(): JSX.Element {
 						<ul className="flex list-none flex-col gap-2 p-0">
 							{filteredPublic.map((r) => {
 								const map = MAPS.find((m) => m.id === r.mapId);
-								const isChallenge = r.mode === "grapple_challenge" || r.mode === "rg_challenge";
+								const isChallenge = r.mode === "grapple_challenge" || r.mode === "rg_challenge" || r.mode === "time_challenge";
 								const unlimited = r.maxPlayers === -1;
 								const full = !unlimited && r.playerCount >= r.maxPlayers;
 								const fillPct = unlimited
@@ -266,7 +267,11 @@ export function Home(): JSX.Element {
 											<div className="mt-1 flex flex-wrap items-center gap-1.5">
 {isChallenge ? (
 												<span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-300">
-													{r.mode === "rg_challenge" ? "RG Challenge" : "Speed Challenge"}
+													{r.mode === "rg_challenge"
+														? "RG Challenge"
+														: r.mode === "time_challenge"
+															? "Time Challenge"
+															: "Speed Challenge"}
 												</span>
 											) : (
 												<span className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-[11px] text-zinc-400">
@@ -386,7 +391,7 @@ export function Home(): JSX.Element {
 									<select
 										value={challengeType}
 										onChange={(e) => {
-											const ct = e.target.value as "grapple_challenge" | "rg_challenge";
+											const ct = e.target.value as "grapple_challenge" | "rg_challenge" | "time_challenge";
 											setChallengeType(ct);
 											setMode(ct);
 										}}
@@ -394,6 +399,7 @@ export function Home(): JSX.Element {
 									>
 										<option value="grapple_challenge">Speed Challenge</option>
 										<option value="rg_challenge">RG Challenge</option>
+										<option value="time_challenge">Time Challenge</option>
 									</select>
 								) : (
 									<select

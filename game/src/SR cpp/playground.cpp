@@ -154,6 +154,27 @@ void playground::load_rg_challenge()
 	arm_recorder();
 }
 
+void playground::load_time_challenge()
+{
+	// 30,000 wu corridor (1875 tiles × 16 wu). Player spawns at column 1
+	// — flush against the left wall — and races to touch the right wall.
+	// Same vertical structure as the other challenges so the grapple
+	// ceiling and floor read identically.
+	emu::level::generate_corridor(m_level,
+		emu::time_challenge::corridor_width_tiles,
+		emu::time_challenge::corridor_height_tiles,
+		emu::time_challenge::ceil_y,
+		emu::time_challenge::floor_y,
+		emu::time_challenge::start_x,
+		/*spawn_on_ground=*/true);
+	m_session_max_speed = 0.0f;
+	m_game_mode = emu::GameMode::time_challenge;
+	init();
+	// Speed cap off — players need raw velocity to traverse 30K wu fast.
+	m_state.no_speed_cap = true;
+	arm_recorder();
+}
+
 void playground::reset_rg_state()
 {
 	m_rg_state.reset_streak();
@@ -185,7 +206,8 @@ void playground::reset()
 	// In challenge mode rearm the recorder against the freshly-reset
 	// player so the next attempt is captured from tick 0.
 	if (m_game_mode == emu::GameMode::grapple_challenge ||
-		m_game_mode == emu::GameMode::rg_challenge)
+		m_game_mode == emu::GameMode::rg_challenge ||
+		m_game_mode == emu::GameMode::time_challenge)
 	{
 		arm_recorder();
 	}
@@ -213,6 +235,10 @@ bool playground::start_replay(const std::uint8_t* log_data, std::size_t len,
 	else if (mode == 1)
 	{
 		load_rg_challenge();
+	}
+	else if (mode == 2)
+	{
+		load_time_challenge();
 	}
 	else
 	{
@@ -347,6 +373,9 @@ bool playground::arm_recorder()
 	rec.has_been_airborne = false;
 	rec.prev_rg_consecutive = m_rg_state.consecutive;
 	rec.max_streak = m_rg_state.session_best;
+	// Time challenge defers the first tick until the player issues input.
+	// Speed/RG modes start counting immediately (matches prior behavior).
+	rec.waiting_for_input = (m_game_mode == emu::GameMode::time_challenge);
 	return true;
 }
 
@@ -452,10 +481,22 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 	//     k_ground_grace_ticks consecutive ticks (after airborne).
 	//   rg_challenge      — RG counter goes from >0 to 0, OR ground touch
 	//     (after airborne).
+	// Input gate (time_challenge only): clear waiting_for_input the first
+	// time the player issues any input. While waiting we skip the recorder
+	// block entirely — no global_tick advance, no log entries, no run-end
+	// check — so the timer effectively starts on the player's first action.
+	if (m_run_recorder.active && m_run_recorder.waiting_for_input
+		&& input_bitmask != 0)
+	{
+		m_run_recorder.waiting_for_input = false;
+	}
+
 	if ((m_game_mode == emu::GameMode::grapple_challenge ||
-		 m_game_mode == emu::GameMode::rg_challenge)
+		 m_game_mode == emu::GameMode::rg_challenge ||
+		 m_game_mode == emu::GameMode::time_challenge)
 		&& m_player != nullptr && m_player->m_actor != nullptr
-		&& m_run_recorder.active)
+		&& m_run_recorder.active
+		&& !m_run_recorder.waiting_for_input)
 	{
 		auto& rec = m_run_recorder;
 		rec.global_tick++;
@@ -526,7 +567,7 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 				finish_now = true;
 			}
 		}
-		else // rg_challenge
+		else if (m_game_mode == emu::GameMode::rg_challenge)
 		{
 			// RG run-end: streak counter just dropped to 0, OR player just
 			// touched the ground (rising edge). Both conditions require
@@ -538,6 +579,24 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 				is_on_ground && !rec.was_on_ground_prev_rg;
 
 			if (rec.has_been_airborne && (counter_dropped || ground_just_touched))
+			{
+				rec.end_tick = rec.global_tick;
+				finish_now = true;
+			}
+		}
+		else // time_challenge
+		{
+			// Time run-end: player's right edge crossed the goal line.
+			// has_been_airborne gates the spawn / restored-mid-air state
+			// the same way the speed/RG triggers do — a savestate captured
+			// while the player was already at the goal mustn't insta-finish
+			// the next run on tick 0. At fresh load the player spawns at
+			// column 1 (far left) so this gate has no observable cost
+			// during normal play.
+			const float right_edge =
+				m_player->m_actor->d.position.x + m_player->m_actor->d.size.x;
+			if (rec.has_been_airborne
+				&& right_edge >= emu::time_challenge::end_x_threshold)
 			{
 				rec.end_tick = rec.global_tick;
 				finish_now = true;
@@ -608,6 +667,21 @@ void playground::draw(const inputs&)
 	// sitting on the wall edges read as major.
 	if (m_game_mode == emu::GameMode::rg_challenge && draw::visuals().show_rg_grid)
 		draw::draw_rg_grid(m_camera, 48.0f, 368.0f);
+
+	// Time-challenge goal marker: gold band on the inside face of the
+	// right wall. Drawn before the world pass so the wall tile renders on
+	// top, and the band only catches the eye when the player gets close
+	// enough for the right wall to enter the viewport. Same y-bounds as
+	// the RG grid because the corridor interior is identical.
+	if (m_game_mode == emu::GameMode::time_challenge)
+	{
+		// Right wall left edge at (width - 1) * 16. Highlight the last
+		// 96 wu of corridor (6 tiles) so the goal line reads at speed.
+		constexpr float kRightWallX =
+			(emu::time_challenge::corridor_width_tiles - 1) * 16.0f;
+		draw::draw_time_goal(m_camera, kRightWallX - 96.0f, kRightWallX,
+			48.0f, 368.0f);
+	}
 
 	// World pass: tiles + non-player actors (grapple ropes, boost
 	// volumes, obstacles). Flush before drawing the trail so the trail's

@@ -92,7 +92,7 @@ const level_actor& level::get_actor(std::string_view type, int32_t index) const
 	throw std::invalid_argument{ "Actor not found!" };
 }
 
-void level::generate_corridor(level& lvl, int32_t width, int32_t height, int32_t ceil_y, int32_t floor_y, int32_t start_x)
+void level::generate_corridor(level& lvl, int32_t width, int32_t height, int32_t ceil_y, int32_t floor_y, int32_t start_x, bool spawn_on_ground)
 {
 	lvl = level{ width, height };
 
@@ -115,8 +115,14 @@ void level::generate_corridor(level& lvl, int32_t width, int32_t height, int32_t
 		lvl.m_tile_layer.set_tile(width - 1, y, tile_square);
 	}
 
-	// Player sits centered vertically in the air gap.
-	const float spawn_y = static_cast<float>((ceil_y + 1 + floor_y - 1) / 2) * 16.0f;
+	// Player sits centered vertically in the air gap by default. When
+	// spawn_on_ground is true (time_challenge), place the player so its
+	// feet rest on the floor instead — avoids a fall-in animation before
+	// the run can start.
+	constexpr float k_player_height_wu = 45.0f;
+	const float spawn_y = spawn_on_ground
+		? static_cast<float>(floor_y) * 16.0f - k_player_height_wu
+		: static_cast<float>((ceil_y + 1 + floor_y - 1) / 2) * 16.0f;
 	lvl.m_actors.clear();
 	lvl.m_actors.emplace_back(
 		emu::vector{ static_cast<float>(start_x) * 16.0f, spawn_y },

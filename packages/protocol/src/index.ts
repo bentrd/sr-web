@@ -5,7 +5,7 @@
 // change, update both this file AND the C++ sr_get_local_snapshot /
 // sr_push_ghost signatures in the same commit.
 
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 // Hard cap on the per-run savestate blob (raw bytes). 4 KB is far above
 // the actual size produced by playground::capture_savestate (POD struct
@@ -15,7 +15,7 @@ export const SAVESTATE_MAX_BYTES = 4 * 1024;
 
 export type RGB = readonly [r: number, g: number, b: number];
 
-export type GameMode = "standard" | "grapple_challenge" | "rg_challenge";
+export type GameMode = "standard" | "grapple_challenge" | "rg_challenge" | "time_challenge";
 
 // ──────────────────────────────────────────────────────────────────────
 // Phase 0 — connection liveness
@@ -308,6 +308,39 @@ export type RgLeaderboard = {
 };
 
 // ──────────────────────────────────────────────────────────────────────
+// Time Challenge leaderboard — lower is better, time in sim ticks
+// (300 ticks/sec). Run-end is hitting the right wall after airborne.
+// ──────────────────────────────────────────────────────────────────────
+
+export type SubmitTimeRun = {
+	type: "submit_time_run";
+	claimedDurationTicks: number; // ticks taken to reach the end (1..RUN_DURATION_TICKS_MAX)
+	durationTicks: number;        // same value — kept for symmetry with other modes
+	simVersion: number;
+	inputs: string;
+	savestate: string;
+};
+
+export type TimeScoreAck = {
+	type: "time_score_ack";
+	rank: number;       // 1-based
+	bestTicks: number;  // this player's all-time best (lowest) ticks; 0 if none
+};
+
+export type TimeLeaderboardRow = {
+	rank: number;
+	name: string;
+	durationTicks: number; // lower = better
+	runId?: number | null;
+};
+
+export type TimeLeaderboard = {
+	type: "time_leaderboard";
+	date: string;
+	entries: TimeLeaderboardRow[];
+};
+
+// ──────────────────────────────────────────────────────────────────────
 // Unions
 // ──────────────────────────────────────────────────────────────────────
 
@@ -328,7 +361,8 @@ export type ClientMsg =
 	| SubmitScore
 	| SubmitRun
 	| SubmitRgScore
-	| SubmitRgRun;
+	| SubmitRgRun
+	| SubmitTimeRun;
 
 // Sent once per connection right after WS open so the client knows its
 // server-assigned id (used to recognise itself in subsequent room_state
@@ -365,4 +399,6 @@ export type ServerMsg =
 	| ScoreAck
 	| Leaderboard
 	| RgScoreAck
-	| RgLeaderboard;
+	| RgLeaderboard
+	| TimeScoreAck
+	| TimeLeaderboard;

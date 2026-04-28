@@ -302,4 +302,105 @@ extern "C"
 
 		return rg.session_best;
 	}
+
+	// Time-challenge replay. Same procedural corridor parameters as
+	// playground::load_time_challenge() (1875 × 50 tiles, 30,000 wu wide,
+	// player anchored at column 1 next to the left wall). Replays the
+	// recorded inputs for `duration_ticks` ticks, returns the tick at
+	// which the player's right edge first crossed the goal threshold,
+	// or 0 on parse / OOB / savestate error or if the player never
+	// reached the goal in the allotted ticks.
+	//
+	// The server compares the returned tick against the claimed
+	// duration_ticks within ±1 tick tolerance to verdict the run.
+	unsigned int sr_replay_time_run(
+		const unsigned char* log, unsigned int log_len,
+		unsigned int duration_ticks,
+		const unsigned char* savestate, unsigned int savestate_len)
+	{
+		if (log == nullptr || log_len == 0) return 0;
+		if (savestate == nullptr || savestate_len == 0) return 0;
+		constexpr unsigned int k_max_ticks = 5u * 3600u * 300u;
+		if (duration_ticks > k_max_ticks) return 0;
+
+		emu::level lvl;
+		emu::level::generate_corridor(lvl,
+			emu::time_challenge::corridor_width_tiles,
+			emu::time_challenge::corridor_height_tiles,
+			emu::time_challenge::ceil_y,
+			emu::time_challenge::floor_y,
+			emu::time_challenge::start_x,
+			/*spawn_on_ground=*/true);
+
+		emu::state st{ lvl };
+		st.no_speed_cap = true;
+
+		emu::player* p = st.get_contr<emu::player>(0);
+		if (p == nullptr || p->m_actor == nullptr) return 0;
+
+		emu::RgChallengeState rg_unused{};
+		if (!apply_savestate(st, *p, rg_unused, savestate, savestate_len))
+			return 0;
+
+		std::uint64_t event_tick = 0;
+		unsigned int log_pos = 0;
+		std::uint8_t event_bitmask = 0;
+		bool have_event = false;
+
+		std::uint64_t delta = 0;
+		log_pos = read_varint(log, log_len, log_pos, &delta);
+		if (log_pos > log_len || log_pos >= log_len) return 0;
+		event_tick = delta;
+		event_bitmask = log[log_pos++];
+		have_event = true;
+
+		std::uint8_t current_bitmask = 0;
+
+		// Mirror the in-game heuristic: only count a goal-crossing once
+		// the player has been airborne after first touching ground.
+		// Without this, a savestate captured already past the goal would
+		// trip the trigger on tick 0.
+		bool has_been_grounded = p->d.is_on_ground;
+		bool has_been_airborne = false;
+
+		for (unsigned int t = 0; t < duration_ticks; t++)
+		{
+			while (have_event && event_tick == static_cast<std::uint64_t>(t))
+			{
+				current_bitmask = event_bitmask;
+				if (log_pos >= log_len)
+				{
+					have_event = false;
+					break;
+				}
+				std::uint64_t d = 0;
+				log_pos = read_varint(log, log_len, log_pos, &d);
+				if (log_pos > log_len || log_pos >= log_len)
+				{
+					have_event = false;
+					break;
+				}
+				event_tick += d;
+				event_bitmask = log[log_pos++];
+			}
+
+			for (std::size_t i = 0; i < emu::input_count; i++)
+				st.m_inputs[0][i] = ((current_bitmask >> i) & 1u) != 0;
+
+			st.update(emu::timespan{ 33333ull });
+
+			const bool is_on_ground = p->d.is_on_ground;
+			if (is_on_ground) has_been_grounded = true;
+			if (has_been_grounded && !is_on_ground) has_been_airborne = true;
+
+			const float right_edge = p->m_actor->d.position.x + p->m_actor->d.size.x;
+			if (has_been_airborne
+				&& right_edge >= emu::time_challenge::end_x_threshold)
+			{
+				return t + 1; // tick count after this step
+			}
+		}
+
+		return 0;
+	}
 }

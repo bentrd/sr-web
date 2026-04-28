@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../state/AppState";
 import type { ServerMsg } from "@sr-web/protocol";
 
-type LeaderboardEntry = { rank: number; name: string; value: number };
+type LeaderboardEntry = { rank: number; name: string; value: number; display: string };
 
 type ChallengeConfig = {
 	key: string;
@@ -10,11 +10,18 @@ type ChallengeConfig = {
 	url: string;
 	valueKey: string;
 	unit: string;
+	format?: (n: number) => string;
 };
+
+// 300 ticks/sec → seconds with 3 decimals → e.g. "12.345".
+function formatTicksAsSeconds(ticks: number): string {
+	return (ticks / 300).toFixed(3);
+}
 
 const CHALLENGES: ChallengeConfig[] = [
 	{ key: "speed", label: "Speed Challenge", url: "/leaderboard?limit=10", valueKey: "maxSpeed", unit: "wu/s" },
 	{ key: "rg", label: "RG Challenge", url: "/rg-leaderboard?limit=10", valueKey: "maxStreak", unit: "RGs" },
+	{ key: "time", label: "Time Challenge", url: "/time-leaderboard?limit=10", valueKey: "durationTicks", unit: "sec", format: formatTicksAsSeconds },
 ];
 
 function getLeaderboardUrl(path: string): string {
@@ -37,11 +44,15 @@ export function ChallengeLeaderboardCard(): JSX.Element {
 					const res = await fetch(getLeaderboardUrl(ch.url));
 					if (!res.ok) throw new Error(`HTTP ${res.status}`);
 					const rows = (await res.json()) as Array<Record<string, unknown>>;
-					results[ch.key] = rows.map((r, i) => ({
-						rank: (r.rank as number) ?? i + 1,
-						name: r.name as string,
-						value: (r[ch.valueKey] as number) ?? 0,
-					}));
+					results[ch.key] = rows.map((r, i) => {
+						const value = (r[ch.valueKey] as number) ?? 0;
+						return {
+							rank: (r.rank as number) ?? i + 1,
+							name: r.name as string,
+							value,
+							display: ch.format ? ch.format(value) : String(value),
+						};
+					});
 				} catch {
 					results[ch.key] = [];
 				}
@@ -63,6 +74,7 @@ export function ChallengeLeaderboardCard(): JSX.Element {
 						rank: e.rank,
 						name: e.name,
 						value: e.maxSpeed,
+						display: String(e.maxSpeed),
 					})),
 				}));
 			} else if (msg.type === "rg_leaderboard") {
@@ -72,6 +84,17 @@ export function ChallengeLeaderboardCard(): JSX.Element {
 						rank: e.rank,
 						name: e.name,
 						value: e.maxStreak,
+						display: String(e.maxStreak),
+					})),
+				}));
+			} else if (msg.type === "time_leaderboard") {
+				setData((prev) => ({
+					...prev,
+					time: msg.entries.map((e) => ({
+						rank: e.rank,
+						name: e.name,
+						value: e.durationTicks,
+						display: formatTicksAsSeconds(e.durationTicks),
 					})),
 				}));
 			}
@@ -117,7 +140,7 @@ export function ChallengeLeaderboardCard(): JSX.Element {
 												<tr key={e.rank} className="border-t border-zinc-800/50">
 													<td className="truncate px-1 py-1.5 text-xs font-semibold text-amber-400">{e.rank}</td>
 													<td className="truncate px-1 py-1.5 text-xs text-zinc-300">{e.name}</td>
-													<td className="truncate px-1 py-1.5 text-right font-mono text-xs font-semibold text-zinc-100">{e.value}</td>
+													<td className="truncate px-1 py-1.5 text-right font-mono text-xs font-semibold text-zinc-100">{e.display}</td>
 												</tr>
 											))}
 										</tbody>

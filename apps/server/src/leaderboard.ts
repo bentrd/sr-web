@@ -250,6 +250,110 @@ export function rgAllTimeRankForPlayer(
 	return row?.rank ?? 1;
 }
 
+// -- Time Challenge leaderboard (lower duration_ticks is better) --------
+
+function ensureTimeTable(): void {
+	db.run(`
+		CREATE TABLE IF NOT EXISTS time_scores (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			date TEXT NOT NULL,
+			player_name TEXT NOT NULL,
+			duration_ticks INTEGER NOT NULL,
+			timestamp INTEGER NOT NULL
+		)
+	`);
+	db.run(`CREATE INDEX IF NOT EXISTS idx_time_scores_date_dur ON time_scores(date, duration_ticks ASC)`);
+	db.run(`CREATE INDEX IF NOT EXISTS idx_time_scores_date_name ON time_scores(date, player_name)`);
+}
+
+// PR-gated insert: only writes when the new run is strictly FASTER than
+// the player's prior best. A prior of 0 means "no record yet" — any valid
+// run beats it. Returns true iff the row was inserted.
+export function submitTimeScore(
+	date: string,
+	playerName: string,
+	durationTicks: number,
+): boolean {
+	ensureTimeTable();
+	const prior = timeAllTimeBestForPlayer(playerName);
+	if (prior > 0 && durationTicks >= prior) return false;
+	const stmt = db.prepare(`
+		INSERT INTO time_scores (date, player_name, duration_ticks, timestamp)
+		VALUES (?1, ?2, ?3, ?4)
+	`);
+	stmt.run(date, playerName, durationTicks, Date.now());
+	return true;
+}
+
+export function getTimeAllTimeLeaderboard(
+	limit = 10,
+): Array<{ rank: number; name: string; durationTicks: number; runId: number | null }> {
+	ensureTimeTable();
+	ensureTimeRunsTable();
+	const stmt = db.prepare(`
+		WITH best_per_player AS (
+			SELECT player_name, MIN(duration_ticks) AS best
+			FROM time_scores
+			GROUP BY player_name
+		)
+		SELECT b.player_name AS player_name,
+		       b.best AS best,
+		       (SELECT r.id FROM time_runs r
+		        WHERE r.player_name = b.player_name
+		          AND r.claimed_duration_ticks = b.best
+		        ORDER BY r.id DESC LIMIT 1) AS run_id
+		FROM best_per_player b
+		ORDER BY b.best ASC
+		LIMIT ?1
+	`);
+	const rows = stmt.all(limit) as Array<{
+		player_name: string;
+		best: number;
+		run_id: number | null;
+	}>;
+	return rows.map((r, i) => ({
+		rank: i + 1,
+		name: r.player_name,
+		durationTicks: r.best,
+		runId: r.run_id ?? null,
+	}));
+}
+
+// 0 means "no record yet" — different from the speed/RG helpers because
+// a numeric "lowest" requires sentinel handling. Callers compare with > 0
+// before treating the value as a real PR threshold.
+export function timeAllTimeBestForPlayer(playerName: string): number {
+	ensureTimeTable();
+	const stmt = db.prepare(`
+		SELECT MIN(duration_ticks) AS best
+		FROM time_scores
+		WHERE player_name = ?1
+	`);
+	const row = stmt.get(playerName) as { best: number | null } | undefined;
+	return row?.best ?? 0;
+}
+
+export function timeAllTimeRankForPlayer(playerName: string): number {
+	ensureTimeTable();
+	// Players ranked above are those with a STRICTLY LOWER best than mine.
+	// If I have no record, my rank is "the count of players with any record + 1".
+	const stmt = db.prepare(`
+		SELECT COUNT(*) + 1 AS rank
+		FROM (
+			SELECT player_name, MIN(duration_ticks) AS best
+			FROM time_scores
+			GROUP BY player_name
+		) ranked
+		WHERE ranked.best < (
+			SELECT COALESCE(MIN(duration_ticks), 999999999)
+			FROM time_scores
+			WHERE player_name = ?1
+		)
+	`);
+	const row = stmt.get(playerName) as { rank: number } | undefined;
+	return row?.rank ?? 1;
+}
+
 // -- Anti-cheat run storage ----------------------------------------------
 //
 // Holds the raw input stream submitted at the end of each PR-beating
@@ -339,6 +443,111 @@ export function markRgRunVerified(id: number, verified: 1 | -1): boolean {
 	return db
 		.prepare("UPDATE rg_runs SET verified = ? WHERE id = ?")
 		.run(verified, id).changes > 0;
+}
+
+// Time-mode counterpart to runs / rg_runs. The "claimed" value IS the
+// duration_ticks (lower is better), so there's a single column instead
+// of a separate claimed/duration pair.
+function ensureTimeRunsTable(): void {
+	db.run(`
+		CREATE TABLE IF NOT EXISTS time_runs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			date TEXT NOT NULL,
+			player_name TEXT NOT NULL,
+			claimed_duration_ticks INTEGER NOT NULL,
+			sim_version INTEGER NOT NULL,
+			inputs BLOB NOT NULL,
+			savestate BLOB NOT NULL DEFAULT x'',
+			verified INTEGER NOT NULL DEFAULT 0,
+			timestamp INTEGER NOT NULL
+		)
+	`);
+	const cols = db.prepare(`PRAGMA table_info(time_runs)`).all() as { name: string }[];
+	if (!cols.some((c) => c.name === "savestate")) {
+		db.run(`ALTER TABLE time_runs ADD COLUMN savestate BLOB NOT NULL DEFAULT x''`);
+	}
+	db.run(`CREATE INDEX IF NOT EXISTS idx_time_runs_date_dur ON time_runs(date, claimed_duration_ticks ASC)`);
+	db.run(`CREATE INDEX IF NOT EXISTS idx_time_runs_player ON time_runs(player_name)`);
+}
+
+export function submitTimeRun(
+	date: string,
+	playerName: string,
+	claimedDurationTicks: number,
+	simVersion: number,
+	inputs: Uint8Array,
+	savestate: Uint8Array,
+): number {
+	ensureTimeRunsTable();
+	const r = db
+		.prepare(
+			`INSERT INTO time_runs (date, player_name, claimed_duration_ticks, sim_version, inputs, savestate, timestamp)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+		)
+		.run(date, playerName, claimedDurationTicks, simVersion, inputs, savestate, Date.now());
+	return Number(r.lastInsertRowid);
+}
+
+export function markTimeRunVerified(id: number, verified: 1 | -1): boolean {
+	ensureTimeRunsTable();
+	return db
+		.prepare("UPDATE time_runs SET verified = ? WHERE id = ?")
+		.run(verified, id).changes > 0;
+}
+
+// Drop every prior run row for `playerName`. Called right before inserting
+// a new verified PB so time_runs only ever holds the player's current best
+// (older PB runs are unreachable from the leaderboard and just bloat the
+// DB).
+export function deleteTimeRunsForPlayer(playerName: string): number {
+	ensureTimeRunsTable();
+	return db
+		.prepare("DELETE FROM time_runs WHERE player_name = ?")
+		.run(playerName).changes;
+}
+
+export interface TimeRunRecord {
+	id: number;
+	playerName: string;
+	claimedDurationTicks: number;
+	simVersion: number;
+	verified: number;
+	timestamp: number;
+	inputs: Uint8Array;
+	savestate: Uint8Array;
+}
+
+export function getTimeRunById(id: number): TimeRunRecord | null {
+	ensureTimeRunsTable();
+	const row = db
+		.prepare(
+			`SELECT id, player_name, claimed_duration_ticks, sim_version,
+			        verified, timestamp, inputs, savestate
+			 FROM time_runs WHERE id = ?`,
+		)
+		.get(id) as
+		| {
+			id: number;
+			player_name: string;
+			claimed_duration_ticks: number;
+			sim_version: number;
+			verified: number;
+			timestamp: number;
+			inputs: Uint8Array;
+			savestate: Uint8Array;
+		}
+		| undefined;
+	if (!row) return null;
+	return {
+		id: row.id,
+		playerName: row.player_name,
+		claimedDurationTicks: row.claimed_duration_ticks,
+		simVersion: row.sim_version,
+		verified: row.verified,
+		timestamp: row.timestamp,
+		inputs: row.inputs,
+		savestate: row.savestate,
+	};
 }
 
 // Public-readable shape for the GET /run/:id endpoint. Inputs and

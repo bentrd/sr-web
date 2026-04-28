@@ -91,6 +91,9 @@ interface CAbi {
 	getRgConsecutive: () => number;
 	getRgBest: () => number;
 	resetRgChallenge: () => void;
+	loadTimeChallenge: () => void;
+	resetTimeChallenge: () => void;
+	getTimeRunElapsedTicks: () => number;
 	pushGhost: (
 		id: string,
 		posX: number, posY: number,
@@ -163,6 +166,9 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_rg_consecutive = mod.cwrap("sr_get_rg_consecutive", "number", []);
 	const f_rg_best = mod.cwrap("sr_get_rg_best", "number", []);
 	const f_reset_rg_ch = mod.cwrap("sr_reset_rg_challenge", null, []);
+	const f_load_time_ch = mod.cwrap("sr_load_time_challenge", null, []);
+	const f_reset_time_ch = mod.cwrap("sr_reset_time_challenge", null, []);
+	const f_time_elapsed = mod.cwrap("sr_time_run_elapsed_ticks", "number", []);
 	const f_push = mod.cwrap("sr_push_ghost", null, [
 		"string",
 		"number", "number",
@@ -248,6 +254,9 @@ function bindCAbi(mod: SrModule): CAbi {
 		getRgConsecutive: () => f_rg_consecutive() as number,
 		getRgBest: () => f_rg_best() as number,
 		resetRgChallenge: () => { f_reset_rg_ch(); },
+		loadTimeChallenge: () => { f_load_time_ch(); },
+		resetTimeChallenge: () => { f_reset_time_ch(); },
+		getTimeRunElapsedTicks: () => f_time_elapsed() as number,
 		pushGhost: (id, posX, posY, velX, velY, facing, anim, grappleActive, gxOrigin, gyOrigin, gxAttach, gyAttach, gLength, gTaut, sizeX, sizeY) => {
 			f_push(
 				id,
@@ -363,6 +372,11 @@ interface HoveredLabel {
 const HOVER_RADIUS_PX = 30;
 const HOVER_RADIUS_SQ = HOVER_RADIUS_PX * HOVER_RADIUS_PX;
 
+// 300 ticks/sec; format as xx.xxx seconds.
+function formatTicksAsSeconds(ticks: number): string {
+	return (ticks / 300).toFixed(3);
+}
+
 export function Game(): JSX.Element {
 	const { ws, identity, bindings, targetFps, visuals, room, playerId, quickChat, sendChat } = useApp();
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -381,18 +395,21 @@ export function Game(): JSX.Element {
 	// Speed Challenge state
 	const isChallenge = room?.mode === "grapple_challenge";
 	const isRgChallenge = room?.mode === "rg_challenge";
+	const isTimeChallenge = room?.mode === "time_challenge";
 	const [sessionMax, setSessionMax] = useState<number>(0);
 	const [rgConsecutive, setRgConsecutive] = useState<number>(0);
 	const [rgBest, setRgBest] = useState<number>(0);
+	const [timeElapsed, setTimeElapsed] = useState<number>(0);
 	const [scoreAck, setScoreAck] = useState<{ rank: number; dailyBest: number } | null>(null);
-	const [leaderboardEntries, setLeaderboardEntries] = useState<Array<{ rank: number; name: string; value: number; runId: number | null }>>([]);
-	const [leaderboardMode, setLeaderboardMode] = useState<"speed" | "rg">("speed");
+	const [timeScoreAck, setTimeScoreAck] = useState<{ rank: number; bestTicks: number } | null>(null);
+	const [leaderboardEntries, setLeaderboardEntries] = useState<Array<{ rank: number; name: string; value: number; display: string; runId: number | null }>>([]);
+	const [leaderboardMode, setLeaderboardMode] = useState<"speed" | "rg" | "time">("speed");
 	const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
 	// Click-to-replay state. Clicking a leaderboard row fetches the run and
 	// fires a browser-side deterministic replay. The replay banner stays up
 	// until the run finishes (poll `isReplayActive`) or the user clicks stop.
-	const [replayInfo, setReplayInfo] = useState<{ name: string; value: number; rank: number } | null>(null);
+	const [replayInfo, setReplayInfo] = useState<{ name: string; value: number; display: string; rank: number } | null>(null);
 	const [replayProgress, setReplayProgress] = useState(0); // 0..1
 	
 	const submittedRef = useRef(false);
@@ -400,6 +417,9 @@ export function Game(): JSX.Element {
 	// Track the player's known all-time best so we can auto-submit
 	// when the session max surpasses it. Initialized from score_ack.
 	const allTimeBestRef = useRef<number>(0);
+	// Time challenge: lower is better. 0 = no record yet. Initialized from
+	// time_score_ack so the next PR check uses the server-truth value.
+	const timeAllTimeBestRef = useRef<number>(0);
 
 	// Memo'd lookup: peer id -> {name, color}. Updated on every room_state.
 	const peerInfo = useMemo(() => {
@@ -436,13 +456,20 @@ export function Game(): JSX.Element {
 					abi.loadChallenge();
 				} else if (room.mode === "rg_challenge") {
 					abi.loadRgChallenge();
+				} else if (room.mode === "time_challenge") {
+					abi.loadTimeChallenge();
 				} else {
 					abi.loadMap(`/maps/${room.mapId}.sr`);
 				}
 				// Hide the in-game boost meter HUD bar in challenge modes —
 				// the leaderboard + session-best already crowd the top of the
 				// screen and the bar isn't useful for runs.
+				// Hide the boost-meter HUD in any challenge mode — leaderboard
+				// + session-best already crowd the top of the screen.
 				abi.setVisualShowBoostBar(room.mode === "standard");
+				// Show the corridor grid only in RG mode, not time/speed.
+				// (Existing per-mode visual setup runs in setVisualRgGrid via
+				// the visuals effect below; nothing to do here.)
 				// Trail is best-effort — failures must not block the game
 				// from starting. If the user picked a custom .srt, load
 				// that into the local player's track (id ""); otherwise
@@ -549,19 +576,28 @@ export function Game(): JSX.Element {
 					// that produces a verifiable score.
 					submittedRef.current = false;
 					abi.resetChallenge();
+				} else if (isTimeChallenge) {
+					// Time mode: reset returns the player to the left wall
+					// and re-arms the recorder. submit_time_run fires only
+					// when the right wall is reached after airborne.
+					submittedRef.current = false;
+					abi.resetTimeChallenge();
 				} else {
 					abi.resetLocal();
 				}
 				return;
 			}
-			// Save/load are disabled in Speed Challenge.
-			if (!isChallenge && bind.code === saveCode) {
+			// Save/load are disabled in any challenge mode — they'd let a
+			// player rewind to the start of a successful section and game
+			// the recorder.
+			const inAnyChallenge = isChallenge || isRgChallenge || isTimeChallenge;
+			if (!inAnyChallenge && bind.code === saveCode) {
 				e.preventDefault();
 				e.stopImmediatePropagation();
 				abi.saveState();
 				return;
 			}
-			if (!isChallenge && bind.code === loadCode) {
+			if (!inAnyChallenge && bind.code === loadCode) {
 				e.preventDefault();
 				e.stopImmediatePropagation();
 				abi.loadState();
@@ -570,7 +606,7 @@ export function Game(): JSX.Element {
 		};
 		window.addEventListener("keydown", onKey, true);
 		return () => window.removeEventListener("keydown", onKey, true);
-	}, [status, isChallenge, bindings.reset.code, bindings.save_state.code, bindings.load_state.code]);
+	}, [status, isChallenge, isRgChallenge, isTimeChallenge, bindings.reset.code, bindings.save_state.code, bindings.load_state.code]);
 
 	// Quick chat: number keys 1-4 open menus; pressing 1-4 again while
 	// a menu is open sends the selected message (or cancels on 4).
@@ -734,6 +770,7 @@ export function Game(): JSX.Element {
 						rank: e.rank,
 						name: e.name,
 						value: e.maxSpeed,
+						display: String(e.maxSpeed),
 						runId: e.runId ?? null,
 					})));
 					return;
@@ -744,6 +781,18 @@ export function Game(): JSX.Element {
 						rank: e.rank,
 						name: e.name,
 						value: e.maxStreak,
+						display: String(e.maxStreak),
+						runId: e.runId ?? null,
+					})));
+					return;
+				}
+				case "time_leaderboard": {
+					setLeaderboardMode("time");
+					setLeaderboardEntries(msg.entries.map((e) => ({
+						rank: e.rank,
+						name: e.name,
+						value: e.durationTicks,
+						display: formatTicksAsSeconds(e.durationTicks),
 						runId: e.runId ?? null,
 					})));
 					return;
@@ -890,7 +939,7 @@ export function Game(): JSX.Element {
 			}
 
 			// Local-player speed (rounded to int — the readout is whole-px).
-			if (speedometerEnabled || isChallenge) {
+			if (speedometerEnabled || isChallenge || isTimeChallenge) {
 				const bytes = abi.getLocalSnapshot();
 				if (bytes) {
 					const snap = decodeSnapshot(bytes);
@@ -956,6 +1005,38 @@ export function Game(): JSX.Element {
 				}
 			}
 
+			// Time Challenge: live elapsed-tick readout + PR-gated submit.
+			if (isTimeChallenge) {
+				const elapsed = abi.getTimeRunElapsedTicks();
+				setTimeElapsed((prev) => (prev === elapsed ? prev : elapsed));
+
+				// Drain finished run (C++ fires on right-wall touch after
+				// airborne). durationTicks IS the score in this mode.
+				const finished = abi.consumeFinishedRun();
+				if (finished !== null && finished.durationTicks > 0) {
+					const ticks = finished.durationTicks;
+					const prior = timeAllTimeBestRef.current;
+					const isPR = prior === 0 || ticks < prior;
+					if (isPR) {
+						timeAllTimeBestRef.current = ticks;
+						ws.send({
+							type: "submit_time_run",
+							claimedDurationTicks: ticks,
+							durationTicks: ticks,
+							simVersion: abi.runSimVersion(),
+							inputs: bytesToBase64(finished.inputs),
+							savestate: bytesToBase64(finished.savestate),
+						});
+					}
+					// Auto-reset so the player can immediately attempt
+					// another run. The recorder re-arms in
+					// waiting-for-input mode (C++ side), so the timer
+					// won't tick until the player presses a key.
+					abi.resetTimeChallenge();
+					setTimeElapsed(0);
+				}
+			}
+
 			// Hover hit-test only when the cursor is over the canvas.
 			const cursor = cursorRef.current;
 			if (cursor === null) {
@@ -1007,7 +1088,7 @@ export function Game(): JSX.Element {
 		};
 		raf = requestAnimationFrame(tick);
 		return () => cancelAnimationFrame(raf);
-	}, [status, room, peerInfo, playerId, hovered, speedometerEnabled, localSpeed]);
+	}, [status, room, peerInfo, playerId, hovered, speedometerEnabled, localSpeed, isChallenge, isRgChallenge, isTimeChallenge, ws]);
 
 	// Clear controller bits when the page loses visibility (tab hidden).
 	// Normal polling is driven by the C++ main loop via EM_ASM, which
@@ -1063,6 +1144,21 @@ export function Game(): JSX.Element {
 		});
 	}, [ws]);
 
+	// Listen for time_score_ack (server confirms a verified time PR).
+	// Lower-is-better, so the PR check uses < not >.
+	useEffect(() => {
+		return ws.onMessage((msg: ServerMsg) => {
+			if (msg.type === "time_score_ack") {
+				setTimeScoreAck({ rank: msg.rank, bestTicks: msg.bestTicks });
+				if (msg.bestTicks > 0
+					&& (timeAllTimeBestRef.current === 0 || msg.bestTicks < timeAllTimeBestRef.current)) {
+					timeAllTimeBestRef.current = msg.bestTicks;
+				}
+				submittedRef.current = false;
+			}
+		});
+	}, [ws]);
+
 	const fetchRgLeaderboard = async (): Promise<void> => {
 		setLeaderboardLoading(true);
 		try {
@@ -1072,7 +1168,30 @@ export function Game(): JSX.Element {
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			const data = (await res.json()) as Array<{ rank: number; name: string; maxStreak: number; runId?: number | null }>;
 			setLeaderboardMode("rg");
-			setLeaderboardEntries(data.map((r) => ({ rank: r.rank, name: r.name, value: r.maxStreak, runId: r.runId ?? null })));
+			setLeaderboardEntries(data.map((r) => ({ rank: r.rank, name: r.name, value: r.maxStreak, display: String(r.maxStreak), runId: r.runId ?? null })));
+		} catch {
+			setLeaderboardEntries([]);
+		} finally {
+			setLeaderboardLoading(false);
+		}
+	};
+
+	const fetchTimeLeaderboard = async (): Promise<void> => {
+		setLeaderboardLoading(true);
+		try {
+			const res = await fetch(
+				`${LEADERBOARD_URL.replace("/leaderboard", "/time-leaderboard")}?limit=10`,
+			);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const data = (await res.json()) as Array<{ rank: number; name: string; durationTicks: number; runId?: number | null }>;
+			setLeaderboardMode("time");
+			setLeaderboardEntries(data.map((r) => ({
+				rank: r.rank,
+				name: r.name,
+				value: r.durationTicks,
+				display: formatTicksAsSeconds(r.durationTicks),
+				runId: r.runId ?? null,
+			})));
 		} catch {
 			setLeaderboardEntries([]);
 		} finally {
@@ -1087,7 +1206,7 @@ export function Game(): JSX.Element {
 			const res = await fetch(`${LEADERBOARD_URL}?limit=10`);
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			const data = (await res.json()) as Array<{ rank: number; name: string; maxSpeed: number; runId?: number | null }>;
-			setLeaderboardEntries(data.map((r) => ({ rank: r.rank, name: r.name, value: r.maxSpeed, runId: r.runId ?? null })));
+			setLeaderboardEntries(data.map((r) => ({ rank: r.rank, name: r.name, value: r.maxSpeed, display: String(r.maxSpeed), runId: r.runId ?? null })));
 		} catch {
 			setLeaderboardEntries([]);
 		} finally {
@@ -1114,8 +1233,9 @@ export function Game(): JSX.Element {
 		if (status !== "ready") return;
 		if (isChallenge) void fetchLeaderboard();
 		if (isRgChallenge) void fetchRgLeaderboard();
+		if (isTimeChallenge) void fetchTimeLeaderboard();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [status, isChallenge, isRgChallenge]);
+	}, [status, isChallenge, isRgChallenge, isTimeChallenge]);
 
 	// (No unmount-time submit. Scores are only minted from
 	// floor-touch-after-airborne via submit_run, which carries the input
@@ -1131,23 +1251,30 @@ export function Game(): JSX.Element {
 		abi.stopReplay();
 		if (isChallenge) abi.resetChallenge();
 		else if (isRgChallenge) abi.resetRgChallenge();
+		else if (isTimeChallenge) abi.resetTimeChallenge();
 		// Reset session-best baselines so the next genuine run by the user
 		// can submit its score normally. The replay sim drove max_speed /
-		// rg_consecutive on the WASM side; resetChallenge above zeros them.
+		// rg_consecutive on the WASM side; reset*Challenge above zeros them.
 		submittedRef.current = false;
 		setSessionMax(0);
 		setRgConsecutive(0);
+		setTimeElapsed(0);
 		setReplayInfo(null);
 		setReplayProgress(0);
-	}, [isChallenge, isRgChallenge]);
+	}, [isChallenge, isRgChallenge, isTimeChallenge]);
 
 	// Begin watching a replay. Fetches the run blob from the server, decodes
 	// the base64 input log, and hands it to the WASM replay machinery.
-	const startReplayFor = useCallback(async (entry: { rank: number; name: string; value: number; runId: number | null }) => {
+	const startReplayFor = useCallback(async (entry: { rank: number; name: string; value: number; display: string; runId: number | null }) => {
 		const abi = abiRef.current;
 		if (!abi || entry.runId == null) return;
 		const base = LEADERBOARD_URL.replace(/\/leaderboard$/, "");
-		const path = leaderboardMode === "rg" ? `/rg-run/${entry.runId}` : `/run/${entry.runId}`;
+		const path =
+			leaderboardMode === "rg"
+				? `/rg-run/${entry.runId}`
+				: leaderboardMode === "time"
+					? `/time-run/${entry.runId}`
+					: `/run/${entry.runId}`;
 		try {
 			const res = await fetch(`${base}${path}`);
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1161,11 +1288,11 @@ export function Game(): JSX.Element {
 			}
 			const inputs = base64ToBytes(data.inputs);
 			const savestate = base64ToBytes(data.savestate);
-			const mode = leaderboardMode === "rg" ? 1 : 0;
+			const mode = leaderboardMode === "rg" ? 1 : leaderboardMode === "time" ? 2 : 0;
 			const ok = abi.startReplay(inputs, data.durationTicks, mode, savestate);
 			if (!ok) throw new Error("replay_start failed");
 			submittedRef.current = true; // suppress auto-submit while replaying
-			setReplayInfo({ name: entry.name, value: entry.value, rank: entry.rank });
+			setReplayInfo({ name: entry.name, value: entry.value, display: entry.display, rank: entry.rank });
 			setReplayProgress(0);
 		} catch (e) {
 			console.warn("[replay] failed to start replay", e);
@@ -1266,7 +1393,28 @@ export function Game(): JSX.Element {
 								Rank #{scoreAck.rank} &middot; all-time best {scoreAck.dailyBest}
 							</div>
 						)}
-						
+
+					</div>
+				)}
+				{isTimeChallenge && status === "ready" && (
+					<div className="challenge-hud">
+						<div className="challenge-speed-row">
+							<span className="challenge-current" style={{ color: "#ffcc33" }}>
+								{formatTicksAsSeconds(timeElapsed)}
+							</span>
+							<span className="challenge-label">elapsed</span>
+						</div>
+						{timeScoreAck && timeScoreAck.bestTicks > 0 && (
+							<div className="challenge-max-row">
+								<span className="challenge-max-value">{formatTicksAsSeconds(timeScoreAck.bestTicks)}</span>
+								<span className="challenge-label">all-time best</span>
+							</div>
+						)}
+						{timeScoreAck && (
+							<div className="challenge-score-ack">
+								Rank #{timeScoreAck.rank}
+							</div>
+						)}
 					</div>
 				)}
 				{hovered && (
@@ -1281,7 +1429,7 @@ export function Game(): JSX.Element {
 					</div>
 				)}
 				{status === "ready" && <QuickChatMenu activeMenu={quickChatMenu} quickChat={quickChat} playerColor={rgbToCss(identity.color)} />}
-				{(isChallenge || isRgChallenge) && leaderboardEntries.length > 0 && (
+				{(isChallenge || isRgChallenge || isTimeChallenge) && leaderboardEntries.length > 0 && (
 					<div className="leaderboard-panel">
 						<div className="lb-panel-title">All-Time Top 10</div>
 						<div className="lb-panel-hint">Click a row to watch the replay</div>
@@ -1302,7 +1450,7 @@ export function Game(): JSX.Element {
 										>
 											<td className="lb-panel-rank">#{e.rank}</td>
 											<td className="lb-panel-name">{e.name}</td>
-											<td className="lb-panel-value">{e.value}</td>
+											<td className="lb-panel-value">{e.display}</td>
 										</tr>
 									);
 								})}
@@ -1315,7 +1463,7 @@ export function Game(): JSX.Element {
 						<div className="replay-banner-title">
 							Watching <strong>{replayInfo.name}</strong>'s run
 							<span className="replay-banner-rank"> · #{replayInfo.rank}</span>
-							<span className="replay-banner-value"> · {replayInfo.value}</span>
+							<span className="replay-banner-value"> · {replayInfo.display}</span>
 						</div>
 						<div className="replay-banner-progress">
 							<div className="replay-banner-progress-bar" style={{ width: `${replayProgress * 100}%` }} />

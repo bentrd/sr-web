@@ -30,7 +30,11 @@ namespace emu
 		bool is_colliding_hori(vector start, float length, float ext = 1.0f) const;
 		bool is_colliding_vert(vector start, float length, float ext = 1.0f) const;
 
-		static void generate_corridor(level& out, int32_t width, int32_t height, int32_t ceil_y, int32_t floor_y, int32_t start_x);
+		// spawn_on_ground=true places PlayerStart with feet on the floor instead
+		// of centered in the air gap. Used by time_challenge so the run starts
+		// without a "drop in" animation. Default false preserves the centered
+		// spawn used by speed/RG modes.
+		static void generate_corridor(level& lvl, int32_t width, int32_t height, int32_t ceil_y, int32_t floor_y, int32_t start_x, bool spawn_on_ground = false);
 	};
 }
 

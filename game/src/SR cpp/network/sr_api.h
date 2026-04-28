@@ -20,6 +20,17 @@ float sr_get_rg_consecutive();
 float sr_get_rg_best();
 void sr_reset_rg_challenge();
 
+// Time challenge: 30,000 wu corridor with the player anchored at the
+// left wall. Run-end fires when the player's right edge crosses the
+// goal line (the right wall). Score = sr_run_consume_finished's
+// duration_ticks (lower is better; 300 ticks = 1 second).
+void sr_load_time_challenge();
+void sr_reset_time_challenge();
+// Live ticks elapsed since the recorder was armed. Returns 0 when the
+// recorder is inactive or when no run is currently being recorded.
+// Used by the JS HUD for the live xx.xxx readout.
+unsigned int sr_time_run_elapsed_ticks();
+
 // Push a single controller input bit for the current frame.
 // Called from JS each rAF with the current gamepad state.
 // action: emu::input enum index (0=left, 1=right, ..., 7=swap)

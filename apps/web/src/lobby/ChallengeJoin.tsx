@@ -38,7 +38,13 @@ export function ChallengeJoin({ code }: { code: string }): JSX.Element {
 				className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-6"
 			>
 				<h1 className="text-lg font-semibold text-zinc-100">
-					{code === "SPEED" ? "Speed Challenge" : "RG Challenge"}
+					{code === "SPEED"
+						? "Speed Challenge"
+						: code === "RGCH1"
+							? "RG Challenge"
+							: code === "RACE1"
+								? "Time Challenge"
+								: "Challenge"}
 				</h1>
 				<p className="text-sm text-zinc-400">
 					Enter your name to join the public challenge room.
