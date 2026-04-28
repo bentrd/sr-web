@@ -39,31 +39,29 @@ int sr_run_is_active();
 // 1 if a finished run is pending consumption by JS.
 int sr_run_is_finished();
 
-// Bytes that sr_run_consume_finished would write right now (0 if no run
-// is pending). Lets JS allocate the right buffer size.
+// Bytes the log half of sr_run_consume_finished would write right now
+// (0 if no run is pending). Lets JS allocate the right buffer size.
 unsigned int sr_run_finished_log_size();
 
-// Atomically read out the finished run and clear it. Returns the number
-// of bytes copied into out_buf (0 if no run is pending or buf_size is
-// too small). out_max_speed / out_duration_ticks are filled when the
-// call succeeds. out_last_run_start receives the relative replay-frame
-// tick where the most recently completed attempt began (0 = level-load),
-// so the JS side can fast-forward replays past prior chained attempts.
-unsigned int sr_run_consume_finished(
-	unsigned char* out_buf, unsigned int buf_size,
-	float* out_max_speed,
-	unsigned int* out_duration_ticks,
-	unsigned int* out_last_run_start);
+// Bytes the savestate half of sr_run_consume_finished would write right
+// now (0 if no run is pending). The savestate is captured at the moment
+// the run was armed and is constant for the lifetime of that run.
+unsigned int sr_run_finished_savestate_size();
 
-// Like sr_run_consume_finished but without the `finished` gate. Used by
-// the RG challenge mode where the streak-break trigger is detected
-// JS-side rather than C-side. Recorder keeps running; nothing is cleared
-// on read so subsequent calls return larger logs.
-unsigned int sr_run_snapshot(
-	unsigned char* out_buf, unsigned int buf_size,
+// Atomically drain the pending finished run: copies the input log into
+// out_log, the starting savestate into out_savestate, fills the run's
+// peak metric (max_speed for grapple_challenge, max_streak for
+// rg_challenge), the duration in ticks, then re-arms the recorder
+// against the current player state.
+//
+// Returns the number of log bytes written. 0 means no run was pending,
+// either buffer was too small, or the re-arm savestate capture failed.
+unsigned int sr_run_consume_finished(
+	unsigned char* out_log, unsigned int log_buf_size,
+	unsigned char* out_savestate, unsigned int savestate_buf_size,
 	float* out_max_speed,
-	unsigned int* out_duration_ticks,
-	unsigned int* out_last_run_start);
+	int* out_max_streak,
+	unsigned int* out_duration_ticks);
 }
 
 #endif

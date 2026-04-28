@@ -124,37 +124,28 @@ interface CAbi {
 	saveState: () => void;
 	loadState: () => boolean;
 	// Anti-cheat run recorder. consumeFinishedRun returns null when no run
-	// is pending, otherwise the bytes + scoring metadata for the run that
-	// just ended (and clears the WASM-side buffer).
+	// is pending, otherwise the bytes + savestate + scoring metadata for
+	// the run that just ended (and re-arms the recorder against the
+	// current player state). `savestate` carries the player's full physics
+	// pose at arm time so the server can replay from that exact mid-session
+	// pose, not from PlayerStart.
 	runSimVersion: () => number;
 	consumeFinishedRun: () => {
 		inputs: Uint8Array;
+		savestate: Uint8Array;
 		maxSpeed: number;
+		maxStreak: number;
 		durationTicks: number;
-		// Replay-frame tick where the most recently completed attempt
-		// began (0 = level-load). Lets the server fast-forward replays
-		// past prior chained attempts in the same continuous recording.
-		lastRunStartTick: number;
-	} | null;
-	// Like consumeFinishedRun but ungated by the floor-touch trigger — JS
-	// uses this in RG mode where the streak-break event is detected in JS.
-	// Returns null only if the recorder is inactive (e.g. log overflowed).
-	snapshotRun: () => {
-		inputs: Uint8Array;
-		maxSpeed: number;
-		durationTicks: number;
-		lastRunStartTick: number;
 	} | null;
 	// Browser-side replay playback. mode: 0=speed challenge, 1=RG challenge.
-	// Loads the level fresh, copies the input log into the WASM heap, and
-	// drives the sim from the replay buffer until exhausted. skipTicks
-	// advances the sim deterministically through the prefix so chained
-	// attempts before the PR are silently fast-forwarded.
+	// Loads the level fresh, applies the savestate so playback starts from
+	// the exact mid-session pose the run was recorded against, then drives
+	// the sim from the replay buffer until exhausted.
 	startReplay: (
 		inputs: Uint8Array,
 		durationTicks: number,
 		mode: number,
-		skipTicks: number,
+		savestate: Uint8Array,
 	) => boolean;
 	stopReplay: () => void;
 	isReplayActive: () => boolean;
@@ -206,14 +197,12 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_run_sim_ver = mod.cwrap("sr_run_sim_version", "number", []);
 	const f_run_finished = mod.cwrap("sr_run_is_finished", "number", []);
 	const f_run_log_size = mod.cwrap("sr_run_finished_log_size", "number", []);
+	const f_run_savestate_size = mod.cwrap("sr_run_finished_savestate_size", "number", []);
 	const f_run_consume = mod.cwrap("sr_run_consume_finished", "number", [
-		"number", "number", "number", "number", "number",
-	]);
-	const f_run_snapshot = mod.cwrap("sr_run_snapshot", "number", [
-		"number", "number", "number", "number", "number",
+		"number", "number", "number", "number", "number", "number", "number",
 	]);
 	const f_replay_start = mod.cwrap("sr_replay_start", "number", [
-		"number", "number", "number", "number", "number",
+		"number", "number", "number", "number", "number", "number",
 	]);
 	const f_replay_stop = mod.cwrap("sr_replay_stop", null, []);
 	const f_replay_active = mod.cwrap("sr_replay_is_active", "number", []);
@@ -225,14 +214,17 @@ function bindCAbi(mod: SrModule): CAbi {
 	const snapPtr = mod._malloc(SNAPSHOT_BYTES);
 	const xPtr = mod._malloc(4);
 	const yPtr = mod._malloc(4);
-	// Out-params for sr_run_consume_finished + a buffer big enough for the
-	// hardest cap (256 KB raw). Kept resident — runs end at most once per
-	// floor touch so the cost of re-allocating per call is silly.
+	// Out-params for sr_run_consume_finished + scratch buffers big enough
+	// for the hardest caps (256 KB raw log, 4 KB raw savestate). Kept
+	// resident — runs end at most once per floor touch so the cost of
+	// re-allocating per call is silly.
 	const RUN_LOG_CAP = 256 * 1024;
+	const RUN_SAVESTATE_CAP = 4 * 1024;
 	const runLogPtr = mod._malloc(RUN_LOG_CAP);
+	const runSavestatePtr = mod._malloc(RUN_SAVESTATE_CAP);
 	const runMaxSpeedPtr = mod._malloc(4);
+	const runMaxStreakPtr = mod._malloc(4);
 	const runDurationPtr = mod._malloc(4);
-	const runLastRunStartPtr = mod._malloc(4);
 
 	return {
 		setLocalIdentity: (name, r, g, b) => {
@@ -318,38 +310,35 @@ function bindCAbi(mod: SrModule): CAbi {
 		runSimVersion: () => f_run_sim_ver() as number,
 		consumeFinishedRun: () => {
 			if ((f_run_finished() as number) === 0) return null;
-			const need = f_run_log_size() as number;
-			if (need <= 0 || need > RUN_LOG_CAP) return null;
+			const logNeed = f_run_log_size() as number;
+			if (logNeed <= 0 || logNeed > RUN_LOG_CAP) return null;
+			const ssNeed = f_run_savestate_size() as number;
+			if (ssNeed <= 0 || ssNeed > RUN_SAVESTATE_CAP) return null;
 			const written = f_run_consume(
 				runLogPtr, RUN_LOG_CAP,
-				runMaxSpeedPtr, runDurationPtr, runLastRunStartPtr,
+				runSavestatePtr, RUN_SAVESTATE_CAP,
+				runMaxSpeedPtr, runMaxStreakPtr, runDurationPtr,
 			) as number;
 			if (written === 0) return null;
 			// HEAPU8 view may move after WASM allocations — re-read each call.
 			const inputs = mod.HEAPU8.slice(runLogPtr, runLogPtr + written);
+			const savestate = mod.HEAPU8.slice(runSavestatePtr, runSavestatePtr + ssNeed);
 			const maxSpeed = mod.HEAPF32[runMaxSpeedPtr >> 2] ?? 0;
+			const maxStreak = new Int32Array(mod.HEAPU8.buffer, runMaxStreakPtr, 1)[0] ?? 0;
 			const dur32 = new Uint32Array(mod.HEAPU8.buffer, runDurationPtr, 1)[0] ?? 0;
-			const lastStart32 = new Uint32Array(mod.HEAPU8.buffer, runLastRunStartPtr, 1)[0] ?? 0;
-			return { inputs, maxSpeed, durationTicks: dur32, lastRunStartTick: lastStart32 };
+			return { inputs, savestate, maxSpeed, maxStreak, durationTicks: dur32 };
 		},
-		snapshotRun: () => {
-			const written = f_run_snapshot(
-				runLogPtr, RUN_LOG_CAP,
-				runMaxSpeedPtr, runDurationPtr, runLastRunStartPtr,
-			) as number;
-			if (written === 0) return null;
-			const inputs = mod.HEAPU8.slice(runLogPtr, runLogPtr + written);
-			const maxSpeed = mod.HEAPF32[runMaxSpeedPtr >> 2] ?? 0;
-			const dur32 = new Uint32Array(mod.HEAPU8.buffer, runDurationPtr, 1)[0] ?? 0;
-			const lastStart32 = new Uint32Array(mod.HEAPU8.buffer, runLastRunStartPtr, 1)[0] ?? 0;
-			return { inputs, maxSpeed, durationTicks: dur32, lastRunStartTick: lastStart32 };
-		},
-		startReplay: (inputs, durationTicks, mode, skipTicks) => {
+		startReplay: (inputs, durationTicks, mode, savestate) => {
 			if (inputs.length === 0 || inputs.length > RUN_LOG_CAP) return false;
+			if (savestate.length === 0 || savestate.length > RUN_SAVESTATE_CAP) return false;
 			// Reuse the run-log scratch buffer — recorder gets cleared by
 			// start_replay on the C++ side, so there's no overlap.
 			mod.HEAPU8.set(inputs, runLogPtr);
-			const ok = f_replay_start(runLogPtr, inputs.length, durationTicks, mode, skipTicks) as number;
+			mod.HEAPU8.set(savestate, runSavestatePtr);
+			const ok = f_replay_start(
+				runLogPtr, inputs.length, durationTicks, mode,
+				runSavestatePtr, savestate.length,
+			) as number;
 			return ok !== 0;
 		},
 		stopReplay: () => { f_replay_stop(); },
@@ -408,8 +397,6 @@ export function Game(): JSX.Element {
 	// Track the player's known all-time best so we can auto-submit
 	// when the session max surpasses it. Initialized from score_ack.
 	const allTimeBestRef = useRef<number>(0);
-	// Track previous RG consecutive count to detect streak→0 transitions.
-	const prevRgConsecutiveRef = useRef<number>(0);
 
 	// Memo'd lookup: peer id -> {name, color}. Updated on every room_state.
 	const peerInfo = useMemo(() => {
@@ -551,7 +538,6 @@ export function Game(): JSX.Element {
 					// submit_rg_score here would be ignored (no backing run
 					// for the validator), so we don't.
 					submittedRef.current = false;
-					prevRgConsecutiveRef.current = 0;
 					abi.resetRgChallenge();
 				} else if (isChallenge) {
 					// Same here: reset only. submit_run fires on
@@ -918,35 +904,23 @@ export function Game(): JSX.Element {
 				const maxSp = Math.round(abi.getMaxSpeed());
 				setSessionMax((prev) => (prev === maxSp ? prev : maxSp));
 
-				// Drain any run that just ended (floor touched). On a PR,
-				// fire submit_run with the input stream + submit_score to
-				// update the live leaderboard — Phase 1 keeps the legacy
-				// scoring path live while runs accumulate for replay
-				// validation.
+				// Drain any run that just ended (grounded-and-not-swinging
+				// for 0.25s). On a PR, fire submit_run with the input
+				// stream + savestate; the server replays + inserts the
+				// score once verified.
 				const finished = abi.consumeFinishedRun();
 				if (finished !== null) {
 					const speedRounded = Math.round(finished.maxSpeed);
 					if (speedRounded > 0 && speedRounded > allTimeBestRef.current) {
 						allTimeBestRef.current = speedRounded;
 						submittedRef.current = true;
-						let b64 = "";
-						const chunk = 0x8000;
-						for (let i = 0; i < finished.inputs.length; i += chunk) {
-							b64 += String.fromCharCode.apply(
-								null,
-								finished.inputs.subarray(i, i + chunk) as unknown as number[],
-							);
-						}
-						// submit_run carries the input log; the server inserts
-						// the score (and broadcasts) once replay validation
-						// passes. No parallel submit_score needed.
 						ws.send({
 							type: "submit_run",
 							claimedMaxSpeed: speedRounded,
 							durationTicks: finished.durationTicks,
-							lastRunStartTick: finished.lastRunStartTick,
 							simVersion: abi.runSimVersion(),
-							inputs: btoa(b64),
+							inputs: bytesToBase64(finished.inputs),
+							savestate: bytesToBase64(finished.savestate),
 						});
 					}
 				}
@@ -958,37 +932,23 @@ export function Game(): JSX.Element {
 				setRgConsecutive((prev) => (prev === rg ? prev : rg));
 				const best = Math.round(abi.getRgBest());
 				setRgBest((prev) => (prev === best ? prev : best));
-				// Auto-submit when streak breaks AND session best beat all-time best.
-				// `prevRg > 0 && rg === 0` fires exactly once per streak break —
-				// no submittedRef guard needed so subsequent PB breaks also submit.
-				const prevRg = prevRgConsecutiveRef.current;
-				prevRgConsecutiveRef.current = rg;
-				if (prevRg > 0 && rg === 0 && best > 0 && best > allTimeBestRef.current) {
-					allTimeBestRef.current = best;
-					// Snapshot the recorder for server-side replay validation.
-					// Recorder keeps running across snapshots, so subsequent
-					// PR breaks in the same session resubmit a strictly-longer
-					// log starting from the same level-load anchor. The server
-					// inserts the score + broadcasts once the replay validates.
-					const snap = abi.snapshotRun();
-					if (snap !== null && snap.inputs.length > 0) {
-						let b64 = "";
-						const chunk = 0x8000;
-						for (let i = 0; i < snap.inputs.length; i += chunk) {
-							b64 += String.fromCharCode.apply(
-								null,
-								snap.inputs.subarray(i, i + chunk) as unknown as number[],
-							);
-						}
-						ws.send({
-							type: "submit_rg_run",
-							claimedMaxStreak: best,
-							durationTicks: snap.durationTicks,
-							lastRunStartTick: snap.lastRunStartTick,
-							simVersion: abi.runSimVersion(),
-							inputs: btoa(b64),
-						});
-					}
+
+				// Drain any RG run that just ended. C++ fires the
+				// finished flag on counter→0 OR ground-touch (whichever
+				// comes first — see playground::update). JS just submits
+				// the PR-beating runs.
+				const finished = abi.consumeFinishedRun();
+				if (finished !== null && finished.maxStreak > 0
+					&& finished.maxStreak > allTimeBestRef.current) {
+					allTimeBestRef.current = finished.maxStreak;
+					ws.send({
+						type: "submit_rg_run",
+						claimedMaxStreak: finished.maxStreak,
+						durationTicks: finished.durationTicks,
+						simVersion: abi.runSimVersion(),
+						inputs: bytesToBase64(finished.inputs),
+						savestate: bytesToBase64(finished.savestate),
+					});
 				}
 			}
 
@@ -1190,18 +1150,15 @@ export function Game(): JSX.Element {
 			const data = await res.json() as {
 				inputs: string;
 				durationTicks: number;
-				lastRunStartTick?: number;
+				savestate?: string;
 			};
-			const raw = atob(data.inputs);
-			const bytes = new Uint8Array(raw.length);
-			for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+			if (typeof data.savestate !== "string" || data.savestate.length === 0) {
+				throw new Error("run is missing savestate (legacy run, no longer playable)");
+			}
+			const inputs = base64ToBytes(data.inputs);
+			const savestate = base64ToBytes(data.savestate);
 			const mode = leaderboardMode === "rg" ? 1 : 0;
-			// `lastRunStartTick` lets the replay skip prior chained attempts
-			// in the same continuous recording — only the final run that
-			// produced the PR is shown. Older rows lacking the field replay
-			// from the start (skip = 0).
-			const skipTicks = data.lastRunStartTick ?? 0;
-			const ok = abi.startReplay(bytes, data.durationTicks, mode, skipTicks);
+			const ok = abi.startReplay(inputs, data.durationTicks, mode, savestate);
 			if (!ok) throw new Error("replay_start failed");
 			submittedRef.current = true; // suppress auto-submit while replaying
 			setReplayInfo({ name: entry.name, value: entry.value, rank: entry.rank });

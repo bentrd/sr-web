@@ -2,9 +2,11 @@
 #include <iostream>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 
 #include "playground.h"
 #include "emulation/player.h"
+#include "emulation/grapple.h"
 #include "emulation/tile_actor.h"
 #include "emulation/rg_detector.h"
 #include "drawing/draw_util.h"
@@ -31,15 +33,18 @@ void run_recorder::clear()
 	first_tick = true;
 	start_tick = 0;
 	end_tick = 0;
-	prev_run_end_tick = 0;
 	max_speed = 0.0f;
+	max_streak = 0;
 	last_bitmask = 0;
 	last_event_global_tick = 0;
 	ground_streak_start_tick = 0;
+	prev_rg_consecutive = 0;
 	log.clear();
-	// Note: was_on_ground_prev and global_tick are NOT reset — global_tick
-	// is monotonic across the session and was_on_ground_prev gets refreshed
-	// by the next update() before recording resumes.
+	savestate.clear();
+	savestate_size = 0;
+	// Note: global_tick / was_on_ground_prev / was_on_ground_prev_rg are
+	// reset by load_*() / reset() / re-arm — we don't reset them here so
+	// in-flight callers see a stable state until the recorder rearms.
 }
 
 void replay_state::clear()
@@ -127,16 +132,12 @@ void playground::load_challenge()
 	// Player spawns at X=200 tiles (3200 wu), centered in the air gap.
 	emu::level::generate_corridor(m_level, 100000, 50, 2, 23, 200);
 	m_session_max_speed = 0.0f;
-	m_run_recorder.clear();
-	m_run_recorder.was_on_ground_prev = true;
-	m_run_recorder.global_tick = 0;
-	// Continuous recording: arm immediately on level-load and keep going
-	// across multiple floor-touch events until reset / overflow.
-	m_run_recorder.active = true;
-	m_run_recorder.start_tick = 0;
 	m_game_mode = emu::GameMode::grapple_challenge;
 	init();
 	m_state.no_speed_cap = true;
+	// init() spawned the player at PlayerStart. Now capture the savestate
+	// for the first run — see arm_recorder for the per-run lifecycle.
+	arm_recorder();
 }
 
 void playground::load_rg_challenge()
@@ -144,18 +145,12 @@ void playground::load_rg_challenge()
 	// Same corridor as speed challenge — a long straight hallway with
 	// grapple-able ceiling. The challenge is chaining RGs, not raw speed.
 	emu::level::generate_corridor(m_level, 100000, 50, 2, 23, 200);
-	m_run_recorder.clear();
-	m_run_recorder.was_on_ground_prev = true;
-	m_run_recorder.global_tick = 0;
-	// Continuous recording: arm immediately so a streak-break-PR can
-	// snapshot the full session log for server-side replay validation.
-	m_run_recorder.active = true;
-	m_run_recorder.start_tick = 0;
 	m_game_mode = emu::GameMode::rg_challenge;
 	m_rg_state = emu::RgChallengeState{};
 	init();
 	// Speed cap stays ON for RG mode — we care about precision, not velocity.
 	m_state.no_speed_cap = false;
+	arm_recorder();
 }
 
 void playground::reset_rg_state()
@@ -179,22 +174,19 @@ void playground::init()
 void playground::reset()
 {
 	m_session_max_speed = 0.0f;
-	// Hard reset drops the recording. In challenge mode the recorder is
-	// re-armed immediately so the next attempt is captured from tick 0.
 	m_run_recorder.clear();
-	m_run_recorder.was_on_ground_prev = true;
-	m_run_recorder.global_tick = 0;
-	if (m_game_mode == emu::GameMode::grapple_challenge ||
-		m_game_mode == emu::GameMode::rg_challenge)
-	{
-		m_run_recorder.active = true;
-		m_run_recorder.start_tick = 0;
-	}
 	if (m_player != nullptr)
 	{
 		m_player->reset();
 		m_player->m_actor->set_position(m_level.get_actor("PlayerStart").position);
 		m_helper = util::get_event_helper(*m_player);
+	}
+	// In challenge mode rearm the recorder against the freshly-reset
+	// player so the next attempt is captured from tick 0.
+	if (m_game_mode == emu::GameMode::grapple_challenge ||
+		m_game_mode == emu::GameMode::rg_challenge)
+	{
+		arm_recorder();
 	}
 }
 
@@ -205,13 +197,14 @@ void playground::update_input(const inputs&)
 }
 
 bool playground::start_replay(const std::uint8_t* log_data, std::size_t len,
-	std::uint64_t duration_ticks_in, int mode, std::uint64_t skip_ticks)
+	std::uint64_t duration_ticks_in, int mode,
+	const std::uint8_t* savestate_data, std::size_t savestate_len)
 {
 	if (log_data == nullptr || len < 2) return false;
 	if (duration_ticks_in == 0) return false;
-	if (skip_ticks >= duration_ticks_in) return false;
+	if (savestate_data == nullptr || savestate_len == 0) return false;
 
-	// Lay down the same starting state the run was recorded against.
+	// Lay down the deterministic level + freshly-spawned player.
 	if (mode == 0)
 	{
 		load_challenge();
@@ -221,6 +214,15 @@ bool playground::start_replay(const std::uint8_t* log_data, std::size_t len,
 		load_rg_challenge();
 	}
 	else
+	{
+		return false;
+	}
+
+	// Restore the player to the exact mid-session pose the run started
+	// from. Without this the replay would diverge whenever the original
+	// recording started somewhere other than PlayerStart (e.g. the second
+	// run after a finished first run, where the player is mid-air).
+	if (!restore_savestate(savestate_data, savestate_len))
 	{
 		return false;
 	}
@@ -239,34 +241,163 @@ bool playground::start_replay(const std::uint8_t* log_data, std::size_t len,
 	if (!m_replay.have_event) return false;
 	m_replay.is_active = true;
 
-	// Fast-forward: drive the sim deterministically through `skip_ticks`
-	// of replay input before handing control back to the visible loop.
-	// Each iteration mirrors playground::update()'s replay-driven branch
-	// (resolve bitmask, write inputs, m_state.update). Camera/visuals
-	// are skipped — the next live update() will resync them.
-	if (skip_ticks > 0 && m_player != nullptr)
-	{
-		for (std::uint64_t i = 0; i < skip_ticks; ++i)
-		{
-			if (!m_replay.is_active) break;
-			const std::uint8_t bm = m_replay.step();
-			for (size_t a = 0; a < m_state.m_inputs[0].size(); ++a)
-			{
-				m_state.m_inputs[0][a] = ((bm >> a) & 1u) != 0;
-			}
-			m_state.update(33333);
-			if (m_game_mode == emu::GameMode::rg_challenge && m_player != nullptr)
-			{
-				emu::update_rg_state(m_rg_state, *m_player, m_state.m_time);
-			}
-		}
-	}
 	return true;
 }
 
 void playground::stop_replay()
 {
 	m_replay.clear();
+}
+
+namespace
+{
+	// Savestate header layout. Sizes are validated on restore against the
+	// locally-built sizeof()s — any mismatch (different sim_version, different
+	// build) rejects the savestate rather than memcpy'ing garbage.
+	struct savestate_header
+	{
+		std::uint32_t magic;            // k_savestate_magic
+		std::uint32_t version;          // k_savestate_version
+		std::uint32_t player_d_size;    // sizeof(emu::player::d)
+		std::uint32_t actor_d_size;     // sizeof(emu::actor::d)
+		std::uint32_t grapple_d_size;   // sizeof(emu::grapple::d) (0 if absent)
+		std::uint32_t grapple_actor_d_size; // sizeof(emu::actor::d) (0 if absent)
+		std::uint32_t rg_state_size;    // sizeof(emu::RgChallengeState)
+		std::uint32_t flags;            // bit 0: has_grapple
+		std::int64_t state_time_ticks;  // .NET TimeSpan ticks (100ns each)
+		std::uint64_t reserved;         // pad to 48 bytes for alignment
+	};
+	static_assert(sizeof(savestate_header) == 48, "savestate header must be 48 bytes");
+}
+
+std::size_t playground::capture_savestate(std::uint8_t* out, std::size_t out_size)
+{
+	if (out == nullptr || m_player == nullptr || m_player->m_actor == nullptr) return 0;
+
+	const std::size_t player_sz = sizeof(m_player->d);
+	const std::size_t actor_sz = sizeof(m_player->m_actor->d);
+	const std::size_t rg_sz = sizeof(emu::RgChallengeState);
+
+	const bool has_grapple = (m_player->m_grapple != nullptr)
+		&& (m_player->m_grapple->m_actor != nullptr);
+	const std::size_t grapple_sz = has_grapple ? sizeof(m_player->m_grapple->d) : 0u;
+	const std::size_t grapple_actor_sz = has_grapple
+		? sizeof(m_player->m_grapple->m_actor->d) : 0u;
+
+	const std::size_t total = sizeof(savestate_header) + player_sz + actor_sz
+		+ grapple_sz + grapple_actor_sz + rg_sz;
+	if (out_size < total) return 0;
+
+	savestate_header h{};
+	h.magic = k_savestate_magic;
+	h.version = k_savestate_version;
+	h.player_d_size = static_cast<std::uint32_t>(player_sz);
+	h.actor_d_size = static_cast<std::uint32_t>(actor_sz);
+	h.grapple_d_size = static_cast<std::uint32_t>(grapple_sz);
+	h.grapple_actor_d_size = static_cast<std::uint32_t>(grapple_actor_sz);
+	h.rg_state_size = static_cast<std::uint32_t>(rg_sz);
+	h.flags = has_grapple ? 1u : 0u;
+	h.state_time_ticks = static_cast<std::int64_t>(m_state.m_time.ticks);
+	h.reserved = 0;
+
+	std::size_t off = 0;
+	std::memcpy(out + off, &h, sizeof(h)); off += sizeof(h);
+	std::memcpy(out + off, &m_player->d, player_sz); off += player_sz;
+	std::memcpy(out + off, &m_player->m_actor->d, actor_sz); off += actor_sz;
+	if (has_grapple)
+	{
+		std::memcpy(out + off, &m_player->m_grapple->d, grapple_sz); off += grapple_sz;
+		std::memcpy(out + off, &m_player->m_grapple->m_actor->d, grapple_actor_sz); off += grapple_actor_sz;
+	}
+	std::memcpy(out + off, &m_rg_state, rg_sz); off += rg_sz;
+	return off;
+}
+
+bool playground::arm_recorder()
+{
+	auto& rec = m_run_recorder;
+	rec.clear();
+	if (m_player == nullptr || m_player->m_actor == nullptr)
+	{
+		rec.active = false;
+		return false;
+	}
+	// Capture the savestate against the CURRENT player pose. The next
+	// sim step (driven by playground::update) advances this state with
+	// the seed input bitmask, which is what the server replay does too.
+	rec.savestate.assign(64 * 1024, 0u);
+	rec.savestate_size = capture_savestate(rec.savestate.data(), rec.savestate.size());
+	if (rec.savestate_size == 0)
+	{
+		rec.savestate.clear();
+		rec.active = false;
+		return false;
+	}
+	rec.savestate.resize(rec.savestate_size);
+
+	rec.active = true;
+	rec.first_tick = true;
+	rec.start_tick = 0;
+	rec.global_tick = 0;
+	rec.last_event_global_tick = 0;
+	rec.was_on_ground_prev = m_player->d.is_on_ground;
+	rec.was_on_ground_prev_rg = m_player->d.is_on_ground;
+	rec.has_been_grounded = m_player->d.is_on_ground;
+	rec.has_been_airborne = false;
+	rec.prev_rg_consecutive = m_rg_state.consecutive;
+	rec.max_streak = m_rg_state.session_best;
+	return true;
+}
+
+bool playground::restore_savestate(const std::uint8_t* in, std::size_t in_size)
+{
+	if (in == nullptr || in_size < sizeof(savestate_header)) return false;
+	if (m_player == nullptr || m_player->m_actor == nullptr) return false;
+
+	savestate_header h{};
+	std::memcpy(&h, in, sizeof(h));
+	if (h.magic != k_savestate_magic) return false;
+	if (h.version != k_savestate_version) return false;
+	if (h.player_d_size != sizeof(m_player->d)) return false;
+	if (h.actor_d_size != sizeof(m_player->m_actor->d)) return false;
+	if (h.rg_state_size != sizeof(emu::RgChallengeState)) return false;
+
+	const bool has_grapple = (h.flags & 1u) != 0u;
+	if (has_grapple)
+	{
+		if (m_player->m_grapple == nullptr || m_player->m_grapple->m_actor == nullptr) return false;
+		if (h.grapple_d_size != sizeof(m_player->m_grapple->d)) return false;
+		if (h.grapple_actor_d_size != sizeof(m_player->m_grapple->m_actor->d)) return false;
+	}
+	else
+	{
+		if (h.grapple_d_size != 0 || h.grapple_actor_d_size != 0) return false;
+	}
+
+	const std::size_t need = sizeof(savestate_header) + h.player_d_size + h.actor_d_size
+		+ h.grapple_d_size + h.grapple_actor_d_size + h.rg_state_size;
+	if (in_size < need) return false;
+
+	std::size_t off = sizeof(savestate_header);
+	std::memcpy(&m_player->d, in + off, h.player_d_size); off += h.player_d_size;
+	std::memcpy(&m_player->m_actor->d, in + off, h.actor_d_size); off += h.actor_d_size;
+	if (has_grapple)
+	{
+		std::memcpy(&m_player->m_grapple->d, in + off, h.grapple_d_size); off += h.grapple_d_size;
+		std::memcpy(&m_player->m_grapple->m_actor->d, in + off, h.grapple_actor_d_size); off += h.grapple_actor_d_size;
+	}
+	std::memcpy(&m_rg_state, in + off, h.rg_state_size); off += h.rg_state_size;
+
+	// memcpy bypassed actor::set_position so the cached aabb bounds + the
+	// player's hitboxes (standing/sliding) are stale. Force-resync both.
+	m_player->m_actor->d.position_changed = true;
+	m_player->update_hitboxes();
+
+	// Restore sim time so any timer comparisons remain consistent across
+	// the save boundary. Other state fields (collision_engine, level) are
+	// freshly spawned by the preceding load_*() call.
+	m_state.m_time = emu::timespan{ static_cast<std::uint64_t>(h.state_time_ticks) };
+	return true;
 }
 
 void playground::update(emu::timespan delta, const inputs& inputs, emu::vector viewport_size)
@@ -308,22 +439,18 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 		emu::update_rg_state(m_rg_state, *m_player, m_state.m_time);
 	}
 
-	// --- Replay end-of-run detector ---
-	// duration_ticks already governs the natural end (replay_state::step
-	// flips is_active off when tick >= duration_ticks, which IS the PR
-	// floor-touch in the recording's frame). We previously also stopped
-	// on the first floor-touch-after-airborne to skip trailing content,
-	// but that fired on the spawn-fall landing and clipped the replay
-	// almost immediately. Revisit if we want to skip the prior-attempt
-	// preamble in chained-attempt sessions — the right fix is to record
-	// the last-attempt start tick alongside duration_ticks.
-
-	// --- Challenge run recorder (continuous recording) ---
-	// Active in both grapple_challenge and rg_challenge: recording starts
-	// at level-load (or manual reset) and runs without interruption until
-	// the next reset or 256 KB overflow. On floor-touch-after-airborne the
-	// `finished` flag is raised — speed mode polls it per-frame; RG mode
-	// ignores it and takes a `sr_run_snapshot` on streak-break instead.
+	// --- Per-run recorder (challenge modes) ---
+	// Each run is its own short input log starting at tick 0 of the run,
+	// paired with a savestate captured at first_tick. JS drains finished
+	// runs via sr_run_consume_finished, which also re-arms the recorder
+	// in place: a fresh savestate is captured at the current frame and
+	// the next run begins.
+	//
+	// Run-end triggers (per game mode):
+	//   grapple_challenge — grounded-and-not-swinging for
+	//     k_ground_grace_ticks consecutive ticks (after airborne).
+	//   rg_challenge      — RG counter goes from >0 to 0, OR ground touch
+	//     (after airborne).
 	if ((m_game_mode == emu::GameMode::grapple_challenge ||
 		 m_game_mode == emu::GameMode::rg_challenge)
 		&& m_player != nullptr && m_player->m_actor != nullptr
@@ -334,20 +461,31 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 
 		const bool is_on_ground = m_player->d.is_on_ground;
 		const float speed = m_player->m_actor->d.velocity.length();
+		const int rg_consecutive = m_rg_state.consecutive;
+		const int rg_session_best = m_rg_state.session_best;
 
 		if (rec.first_tick)
 		{
-			// Seed the log with the starting input bitmask at delta=0 so
-			// the server replay knows the initial state.
+			// arm_recorder already captured the savestate against the
+			// pre-sim player state. Now seed the log with the bitmask
+			// that drove this first sim step (delta=0).
 			rec.first_tick = false;
-			rec.start_tick = rec.global_tick;
-			rec.max_speed = speed;
 			rec.last_bitmask = input_bitmask;
 			rec.last_event_global_tick = rec.global_tick;
+			rec.max_speed = speed;
+			if (rg_session_best > rec.max_streak) rec.max_streak = rg_session_best;
 			rec.append_event(input_bitmask);
+			// Refresh airborne gates from the post-sim state so a savestate
+			// restored mid-air doesn't immediately satisfy a ground trigger.
+			if (is_on_ground) rec.has_been_grounded = true;
+			rec.was_on_ground_prev = is_on_ground;
+			rec.was_on_ground_prev_rg = is_on_ground;
+			rec.prev_rg_consecutive = rg_consecutive;
+			rec.ground_streak_start_tick = 0;
 		}
 
 		if (speed > rec.max_speed) rec.max_speed = speed;
+		if (rg_session_best > rec.max_streak) rec.max_streak = rg_session_best;
 
 		if (input_bitmask != rec.last_bitmask)
 		{
@@ -355,57 +493,74 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 			rec.last_bitmask = input_bitmask;
 		}
 
-		// Track grounded → airborne progression. `has_been_grounded` must
-		// flip first (the player must touch the ground at least once
-		// before we'll consider their next airborne→ground transition a
-		// completed run). Without this gate the spawn-fall landing would
-		// fire `finished` immediately at level-load.
+		// Airborne gate: ignore the spawn / restored-mid-air state until
+		// the player has touched the ground at least once, then watch for
+		// the next airborne transition. Without this a savestate captured
+		// while airborne would immediately satisfy a ground-touch trigger
+		// on the very next tick.
 		if (is_on_ground) rec.has_been_grounded = true;
 		if (rec.has_been_grounded && !is_on_ground) rec.has_been_airborne = true;
 
-		// Run-end trigger: the player must be on the ground AND not in a
-		// swing/grapple state continuously for k_ground_grace_ticks.
-		// Brief floor-grazes mid-swing don't reset the streak only if
-		// they happen during a grapple — but a graze WHILE grappling is
-		// still "on ground" for one tick, so we exclude swing/grapple
-		// from counting toward the streak entirely. end_tick is set to
-		// the moment of first landing so the replay terminates there
-		// rather than 0.5s later.
-		const bool in_swing = m_player->d.is_grappling || m_player->d.is_swinging;
-		if (!is_on_ground || in_swing)
+		bool finish_now = false;
+
+		if (m_game_mode == emu::GameMode::grapple_challenge)
 		{
-			rec.ground_streak_start_tick = 0;
+			// Speed run-end: 0.25s of grounded-and-not-swinging after airborne.
+			const bool in_swing = m_player->d.is_grappling || m_player->d.is_swinging;
+			if (!is_on_ground || in_swing)
+			{
+				rec.ground_streak_start_tick = 0;
+			}
+			else if (rec.ground_streak_start_tick == 0)
+			{
+				rec.ground_streak_start_tick = rec.global_tick;
+			}
+
+			if (rec.has_been_airborne
+				&& rec.ground_streak_start_tick != 0
+				&& rec.global_tick >= rec.ground_streak_start_tick
+					+ static_cast<std::uint64_t>(run_recorder::k_ground_grace_ticks - 1))
+			{
+				rec.end_tick = rec.ground_streak_start_tick;
+				finish_now = true;
+			}
 		}
-		else if (rec.ground_streak_start_tick == 0)
+		else // rg_challenge
 		{
-			rec.ground_streak_start_tick = rec.global_tick;
+			// RG run-end: streak counter just dropped to 0, OR player just
+			// touched the ground (rising edge). Both conditions require
+			// has_been_airborne so the spawn / restored-mid-air state
+			// doesn't immediately satisfy either trigger.
+			const bool counter_dropped =
+				rec.prev_rg_consecutive > 0 && rg_consecutive == 0;
+			const bool ground_just_touched =
+				is_on_ground && !rec.was_on_ground_prev_rg;
+
+			if (rec.has_been_airborne && (counter_dropped || ground_just_touched))
+			{
+				rec.end_tick = rec.global_tick;
+				finish_now = true;
+			}
 		}
 
-		if (rec.has_been_airborne
-			&& rec.ground_streak_start_tick != 0
-			&& rec.global_tick >= rec.ground_streak_start_tick
-				+ static_cast<std::uint64_t>(run_recorder::k_ground_grace_ticks - 1))
-		{
-			// Capture the OLD end_tick before overwriting it — that's the
-			// start of the attempt that just ended (used by replays to
-			// skip earlier attempts in chained sessions). end_tick is the
-			// landing tick, not the grace-expiry tick, so the visible
-			// replay ends the moment the player lands.
-			rec.prev_run_end_tick = rec.end_tick;
-			rec.end_tick = rec.ground_streak_start_tick;
-			rec.finished = true;
-			rec.has_been_airborne = false;
-			rec.ground_streak_start_tick = 0;
-		}
-
-		// Hard cap on payload — drop the recorder rather than letting the
-		// log grow unbounded. JS treats this as a forced reset.
+		// Hard cap on per-run payload — drop the recorder rather than let
+		// a runaway state-machine grow the log unbounded.
 		if (rec.log.size() > run_recorder::k_log_max_bytes)
 		{
 			rec.active = false;
 		}
 
 		rec.was_on_ground_prev = is_on_ground;
+		rec.was_on_ground_prev_rg = is_on_ground;
+		rec.prev_rg_consecutive = rg_consecutive;
+
+		if (finish_now)
+		{
+			rec.finished = true;
+			// Don't re-arm here — JS reads the run via sr_run_consume_finished
+			// which captures a fresh savestate at the consume point and
+			// resets the per-run buffers atomically.
+		}
 	}
 
 	m_camera.viewport_size = viewport_size;

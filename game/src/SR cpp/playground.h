@@ -17,89 +17,115 @@
 #include "network/ghost_manager.h"
 #include "network/local_identity.h"
 
-// Records a continuous input log for server-side replay validation in
-// grapple_challenge mode. Recording starts at level-load (or manual reset)
-// and runs without interruption until the next reset (or 256 KB overflow).
-// On each floor-touch-after-airborne the `finished` flag is raised so JS
-// can sample the current state and submit if it's a new PR — the recorder
-// keeps running so subsequent attempts can also submit.
+// Records a per-run input log + a starting savestate for server-side
+// replay validation in grapple_challenge / rg_challenge mode. Each run
+// gets its own log starting at tick 0 of the run and a binary blob
+// capturing the player's full physics state at the recorder arm point —
+// so the server can deterministically replay from arbitrary mid-session
+// state, not only from a freshly-loaded level.
 //
-// Wire format:
+// Wire format (input log):
 //   [varint tickDelta][uint8 bitmask] [varint tickDelta][uint8 bitmask] ...
-// The first entry has tickDelta=0 and carries the initial input state at
-// recording start. Subsequent entries are emitted whenever the input
-// bitmask changes. The server replays the deterministic sim from a freshly
-// constructed level-state with this stream and compares max_speed.
+// First entry has tickDelta=0 and carries the initial input bitmask.
+// Subsequent entries emit on bitmask change. Bit layout: 0=left, 1=right,
+// 2=jump, 3=grapple, 4=slide, 5=boost, 6=item, 7=swap.
+//
+// Run-end heuristics (per game mode):
+//   grapple_challenge — player on ground (not swinging/grappling) for
+//     k_ground_grace_ticks consecutive ticks after first being airborne.
+//   rg_challenge      — RG counter goes from >0 to 0, OR player touches
+//     the ground (after first being airborne).
+//
+// On each finish the C++ side commits the run (sets `finished`), JS reads
+// the log + savestate via sr_run_consume_finished, then the recorder
+// re-arms in place: a new savestate is captured at the current frame,
+// the log is reset, and the next run begins.
 struct run_recorder
 {
-	// Bumped whenever physics, input mapping, or mode parameters change in a
-	// way that would invalidate previously-recorded streams. Server rejects
-	// replays whose sim_version does not match the running server build.
-	static constexpr std::uint32_t k_sim_version = 1;
-	// Hard cap on log payload. ~4 hours of continuous play before reset is
-	// required, given empirically-measured ~0.06 bytes/tick at 300 Hz.
+	// Bumped whenever physics, input mapping, savestate format, or run-end
+	// heuristics change in a way that would invalidate previously-recorded
+	// streams. Server rejects replays whose sim_version does not match.
+	static constexpr std::uint32_t k_sim_version = 2;
+	// Hard cap on per-run log size. ~4 hours of continuous flight at the
+	// empirically-measured ~0.06 bytes/tick — vastly more than any real
+	// run, so this only fires on broken state machines.
 	static constexpr std::size_t k_log_max_bytes = 256 * 1024;
-	// Run-end requires the player to be on the ground continuously for
-	// this many ticks, with no swing/grapple state during the streak. At
-	// 300 Hz this is ~0.5s of "settled landing". The grace prevents
-	// brief floor-grazes during a swing from cutting the run short.
-	static constexpr int k_ground_grace_ticks = 150;
+	// Speed-mode run-end: grounded-and-not-swinging for this many
+	// consecutive sim ticks (300 Hz → 75 = 0.25 s). Brief floor-grazes
+	// mid-swing don't reset the streak because grapple/swing state is
+	// excluded from the streak entirely.
+	static constexpr int k_ground_grace_ticks = 75;
 
-	// Monotonic sim-tick counter. Incremented on every sim step (1/300s),
-	// independent of wall clock. Used as the time base for log tick deltas.
+	// Monotonic sim-tick counter. Incremented every sim step (1/300s).
+	// Resets to 0 on each new recording arm so per-run logs anchor at 0.
 	std::uint64_t global_tick = 0;
 
-	// True while we're recording (always true in challenge mode unless the
-	// log has overflowed and is awaiting a reset).
+	// True while we're recording. Cleared on level-load / manual reset /
+	// overflow / replay playback.
 	bool active = false;
-	// True after a floor-touch-after-airborne event, until JS samples it.
-	// Cleared by JS-side consume call; recorder keeps running.
+	// Set when the recorder hits its run-end trigger and a fresh log is
+	// ready to be drained by JS via sr_run_consume_finished. Cleared by
+	// the consume call, which also re-arms the recorder for the next run.
 	bool finished = false;
-	// Has the player been on the ground at least once since the recording
-	// started? Required before `has_been_airborne` can flip — without this
-	// gate, the spawn-fall landing would fire `finished` immediately. A
-	// run only "begins" once the player is settled on the ground.
+	// Gate so the spawn-fall landing doesn't trigger a finish immediately:
+	// the player must touch the ground at least once before the next
+	// airborne→ground transition counts.
 	bool has_been_grounded = false;
-	// Have we left the ground at least once since the recording started or
-	// the last `finished` event was raised? Gate for the next `finished`.
-	// Only flips to true after `has_been_grounded` is set.
+	// Set the moment the player leaves the ground after `has_been_grounded`.
+	// Required before any run-end trigger fires.
 	bool has_been_airborne = false;
-	// First sim tick of an active recording — seeds the log with the
-	// initial bitmask at delta=0 so the replay knows the starting state.
+	// First-tick sentinel: when true, the next update() seeds the log
+	// with the starting bitmask at delta=0 and captures the savestate.
 	bool first_tick = true;
 
-	// Edge detection — last sim step's grounded state. Retained for
-	// compatibility with code that touches it during reset; the trigger
-	// itself uses `ground_streak_start_tick` below.
+	// Edge detection helper for has_been_airborne.
 	bool was_on_ground_prev = true;
+	// Edge detection helper for the RG ground-touch trigger.
+	bool was_on_ground_prev_rg = true;
+	// Previous tick's RG consecutive counter — used to detect counter→0
+	// transitions in rg_challenge mode.
+	int prev_rg_consecutive = 0;
 
-	// First sim tick of the current "settled on ground, not swinging"
-	// streak, or 0 when the player is airborne or in a swing/grapple
-	// state. The run-end fires when the streak has lasted
-	// k_ground_grace_ticks; end_tick is set to this value so the replay
-	// terminates at the moment of landing rather than after the grace.
+	// First sim tick of the current "grounded and not swinging" streak,
+	// or 0 if the player is airborne or in a swing/grapple state. Used
+	// only by the speed-mode run-end heuristic.
 	std::uint64_t ground_streak_start_tick = 0;
 
-	// Recording-scoped state.
-	std::uint64_t start_tick = 0;       // global_tick when recording started
-	std::uint64_t end_tick = 0;         // most recent floor-touch tick
-	// global_tick of the floor touch BEFORE end_tick (i.e. the start of
-	// the most recently completed attempt). 0 when no prior floor touch.
-	// Threaded through to the replay so playback skips earlier attempts
-	// in the same continuous recording and shows only the PR run.
-	std::uint64_t prev_run_end_tick = 0;
-	float max_speed = 0.0f;             // peak |velocity| across recording
+	// Recording-scoped state. start_tick is always 0 in the new per-run
+	// model (kept as a field so existing accessors compile unchanged).
+	std::uint64_t start_tick = 0;
+	std::uint64_t end_tick = 0;        // tick the run ended on (run-end trigger)
+	float max_speed = 0.0f;            // peak |velocity| across this run
+	int max_streak = 0;                // peak RG consecutive across this run
 	std::uint8_t last_bitmask = 0;
 	std::uint64_t last_event_global_tick = 0;
 	std::vector<std::uint8_t> log;
 
-	// Drop the recording entirely (level load / manual reset / overflow).
+	// Player physics savestate captured at first_tick. Sent to the server
+	// alongside the input log so the validator restores the player to the
+	// exact mid-session state the run started in. Format is opaque to the
+	// recorder — produced/consumed by playground::capture_savestate /
+	// playground::restore_savestate. Sized at the savestate header bytes
+	// + the maximum POD payload; the actual bytes used is tracked in
+	// `savestate_size`.
+	std::vector<std::uint8_t> savestate;
+	std::size_t savestate_size = 0;
+
+	// Wipe everything. Called on level-load, manual reset, replay start,
+	// and overflow. The recorder is re-armed from playground after this.
 	void clear();
 
 	// Append an input change to the log: varint(global_tick - last_event_global_tick)
 	// followed by a single bitmask byte. Updates last_event_global_tick.
 	void append_event(std::uint8_t bitmask);
 };
+
+// Savestate magic + current version. Increment savestate_version when
+// any captured field's layout / size changes. The server-side validator
+// rejects any savestate whose magic / version / size fields don't match
+// the locally-built constants.
+inline constexpr std::uint32_t k_savestate_magic = 0x56415350u; // 'PSAV' little-endian
+inline constexpr std::uint32_t k_savestate_version = 1;
 
 // Drives playback of a previously-recorded input log inside the browser
 // sim. Replaces the live keyboard / controller input read in
@@ -220,16 +246,35 @@ struct playground
 
 	// Start playing back a recorded run. mode 0 = grapple_challenge,
 	// mode 1 = rg_challenge. Regenerates the corresponding procedural
-	// corridor, resets the player to PlayerStart, and arms the replay
-	// driver. `skip_ticks` synchronously fast-forwards the sim through
-	// that many ticks of replay-driven input before returning, so
-	// chained-attempt sessions can resume at the start of the actual PR
-	// run rather than replaying every prior failure. Returns false on
-	// malformed log, unsupported mode, or `skip_ticks >= duration_ticks`.
+	// corridor, then restores the player from `savestate` (so playback
+	// starts in the exact mid-session pose the run was recorded against,
+	// not at PlayerStart). Returns false on malformed log, unsupported
+	// mode, or savestate that fails validation.
 	bool start_replay(const std::uint8_t* log, std::size_t len,
 		std::uint64_t duration_ticks, int mode,
-		std::uint64_t skip_ticks);
+		const std::uint8_t* savestate, std::size_t savestate_len);
 	void stop_replay();
+
+	// Serialize the local player's current physics state into `out` and
+	// return the number of bytes written, or 0 on error (no player /
+	// out_size too small). Format: see k_savestate_magic at the top of
+	// this header. Idempotent — captures everything needed for
+	// restore_savestate to reproduce the exact next-tick behaviour.
+	std::size_t capture_savestate(std::uint8_t* out, std::size_t out_size);
+
+	// Apply a savestate captured by capture_savestate to the local player.
+	// Returns true on success, false on magic / version / size mismatch.
+	// The level itself is not touched — call load_*() first to lay down
+	// the deterministic level state, then restore_savestate().
+	bool restore_savestate(const std::uint8_t* in, std::size_t in_size);
+
+	// Arm the run recorder for a fresh run starting from the current
+	// player state. Captures a savestate, clears per-run accumulators,
+	// and sets the recorder active. Called from load_*(), reset(), and
+	// from sr_run_consume_finished after draining a finished run.
+	// Returns true on success, false if the savestate capture failed
+	// (in which case the recorder is left inactive).
+	bool arm_recorder();
 };
 
 #endif

@@ -566,110 +566,80 @@ extern "C"
 		return static_cast<unsigned int>(rec.log.size());
 	}
 
-	// Atomically read out the current snapshot of the recording (log so
-	// far, peak speed so far, ticks since recording started) and clear
-	// the `finished` flag so the recorder can fire it again on the next
-	// floor-touch-after-airborne. The recorder keeps running — JS can
-	// submit multiple PRs from a single level-load. Returns the number
-	// of bytes copied into out_buf (0 if no run is pending or buf_size
-	// is too small).
-	unsigned int sr_run_consume_finished(
-		unsigned char* out_buf, unsigned int buf_size,
-		float* out_max_speed,
-		unsigned int* out_duration_ticks,
-		unsigned int* out_last_run_start)
+	unsigned int sr_run_finished_savestate_size()
 	{
 		if (g_inst == nullptr) return 0;
-		auto& rec = g_inst->m_playground.m_run_recorder;
+		const auto& rec = g_inst->m_playground.m_run_recorder;
 		if (!rec.finished) return 0;
-		if (out_buf == nullptr) return 0;
-
-		const std::size_t need = rec.log.size();
-		if (buf_size < need) return 0;
-
-		std::memcpy(out_buf, rec.log.data(), need);
-		if (out_max_speed != nullptr) *out_max_speed = rec.max_speed;
-		if (out_duration_ticks != nullptr)
-		{
-			const std::uint64_t dur = (rec.end_tick > rec.start_tick)
-				? (rec.end_tick - rec.start_tick) : 0;
-			*out_duration_ticks = static_cast<unsigned int>(
-				dur > 0xffffffffull ? 0xffffffffull : dur);
-		}
-		if (out_last_run_start != nullptr)
-		{
-			// Relative to start_tick — i.e. the replay-frame tick where
-			// the most recently completed attempt began. 0 when there's
-			// no prior floor touch (the PR run started at level-load).
-			const std::uint64_t skip = (rec.prev_run_end_tick > rec.start_tick)
-				? (rec.prev_run_end_tick - rec.start_tick) : 0;
-			*out_last_run_start = static_cast<unsigned int>(
-				skip > 0xffffffffull ? 0xffffffffull : skip);
-		}
-		// Only clear the finished flag — keep recording so subsequent
-		// floor-touch events can fire it again.
-		rec.finished = false;
-		return static_cast<unsigned int>(need);
+		return static_cast<unsigned int>(rec.savestate_size);
 	}
 
-	// Like sr_run_consume_finished but without the `finished` gate. Used
-	// by the RG challenge mode where the streak-break trigger is detected
-	// JS-side rather than C-side. Recorder keeps running; nothing is
-	// cleared on read so subsequent calls return larger logs.
-	unsigned int sr_run_snapshot(
-		unsigned char* out_buf, unsigned int buf_size,
+	// Atomically drain the current finished run: copy out the log + the
+	// starting savestate + the run's metric (peak speed for speed mode,
+	// peak streak for RG mode), then re-arm the recorder against the
+	// current player state so the next run begins immediately.
+	//
+	// Returns the number of log bytes written. 0 means no run was pending,
+	// the buffers were too small, or arm-rearm capture failed.
+	//
+	// out_max_value is interpreted by the caller per game mode:
+	//   grapple_challenge → peak |velocity| (wu/s) as float
+	//   rg_challenge      → peak streak (session_best) as int (cast to float)
+	unsigned int sr_run_consume_finished(
+		unsigned char* out_log, unsigned int log_buf_size,
+		unsigned char* out_savestate, unsigned int savestate_buf_size,
 		float* out_max_speed,
-		unsigned int* out_duration_ticks,
-		unsigned int* out_last_run_start)
+		int* out_max_streak,
+		unsigned int* out_duration_ticks)
 	{
 		if (g_inst == nullptr) return 0;
-		auto& rec = g_inst->m_playground.m_run_recorder;
-		if (!rec.active) return 0;
-		if (out_buf == nullptr) return 0;
+		auto& pg = g_inst->m_playground;
+		auto& rec = pg.m_run_recorder;
+		if (!rec.finished) return 0;
+		if (out_log == nullptr || out_savestate == nullptr) return 0;
 
-		const std::size_t need = rec.log.size();
-		if (buf_size < need) return 0;
+		const std::size_t log_need = rec.log.size();
+		if (log_buf_size < log_need) return 0;
+		const std::size_t ss_need = rec.savestate_size;
+		if (savestate_buf_size < ss_need) return 0;
+		if (ss_need == 0) return 0;
 
-		std::memcpy(out_buf, rec.log.data(), need);
+		std::memcpy(out_log, rec.log.data(), log_need);
+		std::memcpy(out_savestate, rec.savestate.data(), ss_need);
 		if (out_max_speed != nullptr) *out_max_speed = rec.max_speed;
+		if (out_max_streak != nullptr) *out_max_streak = rec.max_streak;
 		if (out_duration_ticks != nullptr)
 		{
-			// Duration = ticks since recording started (vs. floor-touch in
-			// consume_finished). Snapshot is "now" so end_tick may not be
-			// up to date — use global_tick directly.
-			const std::uint64_t dur = (rec.global_tick > rec.start_tick)
-				? (rec.global_tick - rec.start_tick) : 0;
+			// Per-run logs anchor at tick 0; duration = ticks elapsed
+			// since arm. Capped at 32-bit for the wire format.
+			const std::uint64_t dur = rec.global_tick;
 			*out_duration_ticks = static_cast<unsigned int>(
 				dur > 0xffffffffull ? 0xffffffffull : dur);
 		}
-		if (out_last_run_start != nullptr)
-		{
-			// In RG mode the run "ends" on streak break, not floor touch,
-			// so use the most recent floor-touch tick (= end_tick) as the
-			// best approximation of the last attempt's start. Falls back
-			// to 0 (replay from beginning) when none.
-			const std::uint64_t skip = (rec.end_tick > rec.start_tick)
-				? (rec.end_tick - rec.start_tick) : 0;
-			*out_last_run_start = static_cast<unsigned int>(
-				skip > 0xffffffffull ? 0xffffffffull : skip);
-		}
-		return static_cast<unsigned int>(need);
+
+		// Re-arm against the current player state so the next run begins
+		// from the exact pose the previous run ended in. The new savestate
+		// captures here BEFORE any further sim step runs.
+		pg.arm_recorder();
+		return static_cast<unsigned int>(log_need);
 	}
 
 	// --- Replay playback ---------------------------------------------
 	// Hook for the JS-side "watch this run" feature. start() copies the
 	// log into the playground, regenerates the corresponding challenge
-	// corridor, resets the player, and pauses the run recorder for the
-	// duration of playback. Returns 0 on malformed input / unsupported
-	// mode, 1 on success.
+	// corridor, restores the player from `savestate` (so playback starts
+	// at the exact mid-session pose the run was recorded against), and
+	// pauses the run recorder for the duration of playback. Returns 0 on
+	// malformed input / unsupported mode / savestate mismatch, 1 on success.
 	//
 	// mode: 0 = grapple_challenge, 1 = rg_challenge.
 	int sr_replay_start(const unsigned char* log, unsigned int log_len,
-		unsigned int duration_ticks, int mode, unsigned int skip_ticks)
+		unsigned int duration_ticks, int mode,
+		const unsigned char* savestate, unsigned int savestate_len)
 	{
-		if (g_inst == nullptr || log == nullptr) return 0;
+		if (g_inst == nullptr || log == nullptr || savestate == nullptr) return 0;
 		const bool ok = g_inst->m_playground.start_replay(
-			log, log_len, duration_ticks, mode, skip_ticks);
+			log, log_len, duration_ticks, mode, savestate, savestate_len);
 		return ok ? 1 : 0;
 	}
 

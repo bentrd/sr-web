@@ -12,8 +12,20 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 
 interface ReplayModule {
-	_sr_replay_run: (logPtr: number, logLen: number, durationTicks: number) => number;
-	_sr_replay_rg_run: (logPtr: number, logLen: number, durationTicks: number) => number;
+	_sr_replay_run: (
+		logPtr: number,
+		logLen: number,
+		durationTicks: number,
+		savestatePtr: number,
+		savestateLen: number,
+	) => number;
+	_sr_replay_rg_run: (
+		logPtr: number,
+		logLen: number,
+		durationTicks: number,
+		savestatePtr: number,
+		savestateLen: number,
+	) => number;
 	_malloc: (size: number) => number;
 	_free: (ptr: number) => void;
 	HEAPU8: Uint8Array;
@@ -43,14 +55,19 @@ export interface ReplayResult {
 }
 
 // Replay the recorded inputs and return the peak |velocity| reached
-// during simulation. Errors (OOM, malformed log, runtime crash) are
-// surfaced as { ok: false } so callers can mark the run unverified
-// instead of mis-classifying it as a cheat.
+// during simulation. The savestate carries the player's full physics
+// pose at the moment recording was armed (matching the client's
+// playground::capture_savestate format), so the server reproduces the
+// exact mid-session state the run started from. Errors (OOM, malformed
+// log/savestate, runtime crash) are surfaced as { ok: false } so callers
+// can mark the run unverified instead of mis-classifying it as a cheat.
 export async function replayRun(
 	inputs: Uint8Array,
 	durationTicks: number,
+	savestate: Uint8Array,
 ): Promise<ReplayResult> {
 	if (inputs.length === 0) return { ok: false, maxSpeed: 0, error: "empty inputs" };
+	if (savestate.length === 0) return { ok: false, maxSpeed: 0, error: "empty savestate" };
 	if (!Number.isInteger(durationTicks) || durationTicks <= 0) {
 		return { ok: false, maxSpeed: 0, error: "invalid durationTicks" };
 	}
@@ -66,12 +83,20 @@ export async function replayRun(
 		};
 	}
 
-	let ptr = 0;
+	let logPtr = 0;
+	let ssPtr = 0;
 	try {
-		ptr = mod._malloc(inputs.length);
-		if (!ptr) return { ok: false, maxSpeed: 0, error: "malloc failed" };
-		mod.HEAPU8.set(inputs, ptr);
-		const speed = mod._sr_replay_run(ptr, inputs.length, durationTicks);
+		logPtr = mod._malloc(inputs.length);
+		if (!logPtr) return { ok: false, maxSpeed: 0, error: "malloc failed" };
+		mod.HEAPU8.set(inputs, logPtr);
+
+		ssPtr = mod._malloc(savestate.length);
+		if (!ssPtr) return { ok: false, maxSpeed: 0, error: "savestate malloc failed" };
+		mod.HEAPU8.set(savestate, ssPtr);
+
+		const speed = mod._sr_replay_run(
+			logPtr, inputs.length, durationTicks, ssPtr, savestate.length,
+		);
 		if (!Number.isFinite(speed)) {
 			return { ok: false, maxSpeed: 0, error: "non-finite max_speed" };
 		}
@@ -83,7 +108,8 @@ export async function replayRun(
 			error: e instanceof Error ? e.message : "replay crashed",
 		};
 	} finally {
-		if (ptr) mod._free(ptr);
+		if (logPtr) mod._free(logPtr);
+		if (ssPtr) mod._free(ssPtr);
 	}
 }
 
@@ -105,15 +131,17 @@ export interface RgReplayResult {
 }
 
 // RG-mode counterpart to replayRun. Replays the input log and returns
-// the peak streak (session_best) reached during simulation. Same
-// determinism story as speedRun: the same WASM bytecode runs the same
-// RG detector, so a non-cheating client should produce a bit-exact
-// integer match.
+// the peak streak (session_best) reached during simulation. The
+// savestate restores the player's `RgChallengeState` so the streak
+// counter resumes from exactly where it stood at arm time (mid-session
+// arms produce non-zero starting streaks).
 export async function replayRgRun(
 	inputs: Uint8Array,
 	durationTicks: number,
+	savestate: Uint8Array,
 ): Promise<RgReplayResult> {
 	if (inputs.length === 0) return { ok: false, maxStreak: 0, error: "empty inputs" };
+	if (savestate.length === 0) return { ok: false, maxStreak: 0, error: "empty savestate" };
 	if (!Number.isInteger(durationTicks) || durationTicks <= 0) {
 		return { ok: false, maxStreak: 0, error: "invalid durationTicks" };
 	}
@@ -129,12 +157,20 @@ export async function replayRgRun(
 		};
 	}
 
-	let ptr = 0;
+	let logPtr = 0;
+	let ssPtr = 0;
 	try {
-		ptr = mod._malloc(inputs.length);
-		if (!ptr) return { ok: false, maxStreak: 0, error: "malloc failed" };
-		mod.HEAPU8.set(inputs, ptr);
-		const streak = mod._sr_replay_rg_run(ptr, inputs.length, durationTicks);
+		logPtr = mod._malloc(inputs.length);
+		if (!logPtr) return { ok: false, maxStreak: 0, error: "malloc failed" };
+		mod.HEAPU8.set(inputs, logPtr);
+
+		ssPtr = mod._malloc(savestate.length);
+		if (!ssPtr) return { ok: false, maxStreak: 0, error: "savestate malloc failed" };
+		mod.HEAPU8.set(savestate, ssPtr);
+
+		const streak = mod._sr_replay_rg_run(
+			logPtr, inputs.length, durationTicks, ssPtr, savestate.length,
+		);
 		if (!Number.isInteger(streak) || streak < 0) {
 			return { ok: false, maxStreak: 0, error: "invalid max_streak" };
 		}
@@ -146,7 +182,8 @@ export async function replayRgRun(
 			error: e instanceof Error ? e.message : "replay crashed",
 		};
 	} finally {
-		if (ptr) mod._free(ptr);
+		if (logPtr) mod._free(logPtr);
+		if (ssPtr) mod._free(ssPtr);
 	}
 }
 

@@ -46,6 +46,10 @@ const SCORE_MAX_SPEED_CAP = 100_000;
 // in C++ — both sides reject anything larger.
 const RUN_INPUT_RAW_MAX = 256 * 1024;
 const RUN_INPUT_B64_MAX = Math.ceil((RUN_INPUT_RAW_MAX * 4) / 3) + 16;
+// Per-run player physics savestate cap. Matches SAVESTATE_MAX_BYTES on
+// the wire side — server rejects anything bigger.
+const SAVESTATE_RAW_MAX = 4 * 1024;
+const SAVESTATE_B64_MAX = Math.ceil((SAVESTATE_RAW_MAX * 4) / 3) + 16;
 const RUN_DURATION_TICKS_MAX = 5 * 3600 * 300; // 5 h at 300 Hz
 
 const store = new RoomStore();
@@ -180,12 +184,12 @@ const server = Bun.serve<WsData, never>({
 				playerName: run.playerName,
 				claimedMaxSpeed: run.claimedMaxSpeed,
 				durationTicks: run.durationTicks,
-				lastRunStartTick: run.lastRunStartTick,
 				simVersion: run.simVersion,
 				verified: run.verified,
 				timestamp: run.timestamp,
 				mode: "grapple_challenge",
 				inputs: Buffer.from(run.inputs).toString("base64"),
+				savestate: Buffer.from(run.savestate).toString("base64"),
 			}), {
 				headers: { "content-type": "application/json", "cache-control": "public, max-age=300" },
 			});
@@ -206,12 +210,12 @@ const server = Bun.serve<WsData, never>({
 				playerName: run.playerName,
 				claimedMaxStreak: run.claimedMaxStreak,
 				durationTicks: run.durationTicks,
-				lastRunStartTick: run.lastRunStartTick,
 				simVersion: run.simVersion,
 				verified: run.verified,
 				timestamp: run.timestamp,
 				mode: "rg_challenge",
 				inputs: Buffer.from(run.inputs).toString("base64"),
+				savestate: Buffer.from(run.savestate).toString("base64"),
 			}), {
 				headers: { "content-type": "application/json", "cache-control": "public, max-age=300" },
 			});
@@ -616,9 +620,9 @@ const server = Bun.serve<WsData, never>({
 					const m = msg as {
 						claimedMaxSpeed: number;
 						durationTicks: number;
-						lastRunStartTick: number;
 						simVersion: number;
 						inputs: string;
+						savestate: string;
 					};
 					if (
 						typeof m.claimedMaxSpeed !== "number" ||
@@ -644,16 +648,6 @@ const server = Bun.serve<WsData, never>({
 							message: "durationTicks out of range",
 						});
 					}
-					// lastRunStartTick is the replay-frame tick the final attempt
-					// began on. Older clients omit it; treat undefined as 0
-					// (replay from level-load). Must be < durationTicks so the
-					// fast-forward never reads past the log.
-					const lastStart = typeof m.lastRunStartTick === "number"
-						&& Number.isInteger(m.lastRunStartTick)
-						&& m.lastRunStartTick >= 0
-						&& m.lastRunStartTick < m.durationTicks
-						? m.lastRunStartTick
-						: 0;
 					if (typeof m.simVersion !== "number" || !Number.isInteger(m.simVersion) || m.simVersion < 1) {
 						return send(ws, {
 							type: "error",
@@ -666,6 +660,13 @@ const server = Bun.serve<WsData, never>({
 							type: "error",
 							code: "validation",
 							message: "inputs must be base64 string under cap",
+						});
+					}
+					if (typeof m.savestate !== "string" || m.savestate.length === 0 || m.savestate.length > SAVESTATE_B64_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "savestate must be base64 string under cap",
 						});
 					}
 					let raw: Uint8Array;
@@ -685,6 +686,23 @@ const server = Bun.serve<WsData, never>({
 							message: "inputs raw size out of range",
 						});
 					}
+					let savestate: Uint8Array;
+					try {
+						savestate = Uint8Array.from(atob(m.savestate), (c) => c.charCodeAt(0));
+					} catch {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "savestate base64 decode failed",
+						});
+					}
+					if (savestate.length === 0 || savestate.length > SAVESTATE_RAW_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "savestate raw size out of range",
+						});
+					}
 
 					// No cooldown here — submit_run fires alongside submit_score
 					// from the same client event (floor-touch with PR). Sharing
@@ -701,7 +719,7 @@ const server = Bun.serve<WsData, never>({
 							m.durationTicks,
 							m.simVersion,
 							raw,
-							lastStart,
+							savestate,
 						);
 					} catch {
 						// Storage failures shouldn't break the live game — just drop.
@@ -717,7 +735,7 @@ const server = Bun.serve<WsData, never>({
 					// stamped rejected and the score is silently dropped.
 					const playerName = me.name;
 					const claimed = Math.round(m.claimedMaxSpeed);
-					void replayRun(raw, m.durationTicks).then((res) => {
+					void replayRun(raw, m.durationTicks, savestate).then((res) => {
 						if (!res.ok) return;
 						const verdict: 1 | -1 = speedMatches(m.claimedMaxSpeed, res.maxSpeed)
 							? 1
@@ -804,9 +822,9 @@ const server = Bun.serve<WsData, never>({
 					const m = msg as {
 						claimedMaxStreak: number;
 						durationTicks: number;
-						lastRunStartTick: number;
 						simVersion: number;
 						inputs: string;
+						savestate: string;
 					};
 					if (
 						typeof m.claimedMaxStreak !== "number" ||
@@ -832,12 +850,6 @@ const server = Bun.serve<WsData, never>({
 							message: "durationTicks out of range",
 						});
 					}
-					const lastStartRg = typeof m.lastRunStartTick === "number"
-						&& Number.isInteger(m.lastRunStartTick)
-						&& m.lastRunStartTick >= 0
-						&& m.lastRunStartTick < m.durationTicks
-						? m.lastRunStartTick
-						: 0;
 					if (typeof m.simVersion !== "number" || !Number.isInteger(m.simVersion) || m.simVersion < 1) {
 						return send(ws, {
 							type: "error",
@@ -850,6 +862,13 @@ const server = Bun.serve<WsData, never>({
 							type: "error",
 							code: "validation",
 							message: "inputs must be base64 string under cap",
+						});
+					}
+					if (typeof m.savestate !== "string" || m.savestate.length === 0 || m.savestate.length > SAVESTATE_B64_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "savestate must be base64 string under cap",
 						});
 					}
 					let raw: Uint8Array;
@@ -869,6 +888,23 @@ const server = Bun.serve<WsData, never>({
 							message: "inputs raw size out of range",
 						});
 					}
+					let savestate: Uint8Array;
+					try {
+						savestate = Uint8Array.from(atob(m.savestate), (c) => c.charCodeAt(0));
+					} catch {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "savestate base64 decode failed",
+						});
+					}
+					if (savestate.length === 0 || savestate.length > SAVESTATE_RAW_MAX) {
+						return send(ws, {
+							type: "error",
+							code: "validation",
+							message: "savestate raw size out of range",
+						});
+					}
 
 					let rgRunId = 0;
 					try {
@@ -879,7 +915,7 @@ const server = Bun.serve<WsData, never>({
 							m.durationTicks,
 							m.simVersion,
 							raw,
-							lastStartRg,
+							savestate,
 						);
 					} catch {
 						return;
@@ -890,7 +926,7 @@ const server = Bun.serve<WsData, never>({
 					// surface on the leaderboard.
 					const playerName = me.name;
 					const claimed = Math.round(m.claimedMaxStreak);
-					void replayRgRun(raw, m.durationTicks).then((res) => {
+					void replayRgRun(raw, m.durationTicks, savestate).then((res) => {
 						if (!res.ok) return;
 						const verdict: 1 | -1 = streakMatches(m.claimedMaxStreak, res.maxStreak)
 							? 1
