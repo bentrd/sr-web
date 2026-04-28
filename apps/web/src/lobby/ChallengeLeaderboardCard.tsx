@@ -132,7 +132,7 @@ export function ChallengeLeaderboardCard(): JSX.Element {
 											<tr>
 												<th className="w-8 px-1 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500">#</th>
 												<th className="px-1 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Name</th>
-												<th className="w-12 px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{ch.unit}</th>
+												<th className="w-16 px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{ch.unit}</th>
 											</tr>
 										</thead>
 										<tbody>
@@ -140,7 +140,7 @@ export function ChallengeLeaderboardCard(): JSX.Element {
 												<tr key={e.rank} className="border-t border-zinc-800/50">
 													<td className="truncate px-1 py-1.5 text-xs font-semibold text-amber-400">{e.rank}</td>
 													<td className="truncate px-1 py-1.5 text-xs text-zinc-300">{e.name}</td>
-													<td className="truncate px-1 py-1.5 text-right font-mono text-xs font-semibold text-zinc-100">{e.display}</td>
+													<td className="whitespace-nowrap px-1 py-1.5 text-right font-mono text-xs font-semibold text-zinc-100">{e.display}</td>
 												</tr>
 											))}
 										</tbody>
