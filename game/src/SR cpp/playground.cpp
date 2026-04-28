@@ -34,6 +34,7 @@ void run_recorder::clear()
 	max_speed = 0.0f;
 	last_bitmask = 0;
 	last_event_global_tick = 0;
+	ground_streak_start_tick = 0;
 	log.clear();
 	// Note: was_on_ground_prev and global_tick are NOT reset — global_tick
 	// is monotonic across the session and was_on_ground_prev gets refreshed
@@ -358,18 +359,39 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 		// last submission, so spawn-on-floor doesn't immediately submit.
 		if (!is_on_ground) rec.has_been_airborne = true;
 
-		if (rec.has_been_airborne && !rec.was_on_ground_prev && is_on_ground)
+		// Run-end trigger: the player must be on the ground AND not in a
+		// swing/grapple state continuously for k_ground_grace_ticks.
+		// Brief floor-grazes mid-swing don't reset the streak only if
+		// they happen during a grapple — but a graze WHILE grappling is
+		// still "on ground" for one tick, so we exclude swing/grapple
+		// from counting toward the streak entirely. end_tick is set to
+		// the moment of first landing so the replay terminates there
+		// rather than 0.5s later.
+		const bool in_swing = m_player->d.is_grappling || m_player->d.is_swinging;
+		if (!is_on_ground || in_swing)
 		{
-			// Floor touched after being airborne → mark a submission point.
-			// Recording continues; JS will read the log + max_speed via
-			// sr_run_consume_finished and decide whether to submit.
+			rec.ground_streak_start_tick = 0;
+		}
+		else if (rec.ground_streak_start_tick == 0)
+		{
+			rec.ground_streak_start_tick = rec.global_tick;
+		}
+
+		if (rec.has_been_airborne
+			&& rec.ground_streak_start_tick != 0
+			&& rec.global_tick >= rec.ground_streak_start_tick
+				+ static_cast<std::uint64_t>(run_recorder::k_ground_grace_ticks - 1))
+		{
 			// Capture the OLD end_tick before overwriting it — that's the
 			// start of the attempt that just ended (used by replays to
-			// skip earlier attempts in chained sessions).
+			// skip earlier attempts in chained sessions). end_tick is the
+			// landing tick, not the grace-expiry tick, so the visible
+			// replay ends the moment the player lands.
 			rec.prev_run_end_tick = rec.end_tick;
-			rec.end_tick = rec.global_tick;
+			rec.end_tick = rec.ground_streak_start_tick;
 			rec.finished = true;
 			rec.has_been_airborne = false;
+			rec.ground_streak_start_tick = 0;
 		}
 
 		// Hard cap on payload — drop the recorder rather than letting the

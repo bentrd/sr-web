@@ -39,6 +39,11 @@ struct run_recorder
 	// Hard cap on log payload. ~4 hours of continuous play before reset is
 	// required, given empirically-measured ~0.06 bytes/tick at 300 Hz.
 	static constexpr std::size_t k_log_max_bytes = 256 * 1024;
+	// Run-end requires the player to be on the ground continuously for
+	// this many ticks, with no swing/grapple state during the streak. At
+	// 300 Hz this is ~0.5s of "settled landing". The grace prevents
+	// brief floor-grazes during a swing from cutting the run short.
+	static constexpr int k_ground_grace_ticks = 150;
 
 	// Monotonic sim-tick counter. Incremented on every sim step (1/300s),
 	// independent of wall clock. Used as the time base for log tick deltas.
@@ -57,8 +62,17 @@ struct run_recorder
 	// initial bitmask at delta=0 so the replay knows the starting state.
 	bool first_tick = true;
 
-	// Edge detection — last sim step's grounded state.
+	// Edge detection — last sim step's grounded state. Retained for
+	// compatibility with code that touches it during reset; the trigger
+	// itself uses `ground_streak_start_tick` below.
 	bool was_on_ground_prev = true;
+
+	// First sim tick of the current "settled on ground, not swinging"
+	// streak, or 0 when the player is airborne or in a swing/grapple
+	// state. The run-end fires when the streak has lasted
+	// k_ground_grace_ticks; end_tick is set to this value so the replay
+	// terminates at the moment of landing rather than after the grace.
+	std::uint64_t ground_streak_start_tick = 0;
 
 	// Recording-scoped state.
 	std::uint64_t start_tick = 0;       // global_tick when recording started
