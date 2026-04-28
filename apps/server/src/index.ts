@@ -1128,12 +1128,23 @@ const server = Bun.serve<WsData, never>({
 					// PBs (see deleteTimeRunsForPlayer).
 					const playerName = me.name;
 					const claimed = m.claimedDurationTicks;
+					console.log(`[time_run] received from ${playerName}: claimed=${claimed} duration=${m.durationTicks} simVer=${m.simVersion} inputBytes=${raw.length} ssBytes=${savestate.length}`);
 					void replayTimeRun(raw, m.durationTicks, savestate).then((res) => {
-						if (!res.ok) return;
-						if (!timeMatches(m.claimedDurationTicks, res.durationTicks)) return;
+						if (!res.ok) {
+							console.log(`[time_run] replay FAILED for ${playerName}: error=${res.error ?? "unknown"}`);
+							return;
+						}
+						console.log(`[time_run] replay ok for ${playerName}: claimed=${claimed} actual=${res.durationTicks}`);
+						if (!timeMatches(m.claimedDurationTicks, res.durationTicks)) {
+							console.log(`[time_run] mismatch for ${playerName}: claimed=${claimed} actual=${res.durationTicks}`);
+							return;
+						}
 						// Server-truth PR check before touching the DB.
 						const prior = timeAllTimeBestForPlayer(playerName);
-						if (prior > 0 && claimed >= prior) return;
+						if (prior > 0 && claimed >= prior) {
+							console.log(`[time_run] non-PR for ${playerName}: claimed=${claimed} prior=${prior}`);
+							return;
+						}
 						let timeRunId = 0;
 						try {
 							deleteTimeRunsForPlayer(playerName);
@@ -1146,16 +1157,22 @@ const server = Bun.serve<WsData, never>({
 								savestate,
 							);
 							markTimeRunVerified(timeRunId, 1);
-						} catch {
+						} catch (err) {
+							console.log(`[time_run] DB insert failed for ${playerName}: ${err instanceof Error ? err.message : "unknown"}`);
 							return;
 						}
 						let isPR = false;
 						try {
 							isPR = submitTimeScore(todayDate(), playerName, claimed);
-						} catch {
+						} catch (err) {
+							console.log(`[time_run] score insert failed for ${playerName}: ${err instanceof Error ? err.message : "unknown"}`);
 							return;
 						}
-						if (!isPR) return;
+						if (!isPR) {
+							console.log(`[time_run] score race-lost-PR for ${playerName}: claimed=${claimed}`);
+							return;
+						}
+						console.log(`[time_run] PR saved for ${playerName}: ticks=${claimed} runId=${timeRunId}`);
 						const lb = getTimeAllTimeLeaderboard(10);
 						server.publish("leaderboard-time", JSON.stringify({
 							type: "time_leaderboard",
