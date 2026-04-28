@@ -5,18 +5,27 @@ type SrServer = Server<WsData>;
 import {
 	adminListScores,
 	adminListRgScores,
+	adminListTimeScores,
 	adminUpdateScore,
 	adminUpdateRgScore,
+	adminUpdateTimeScore,
 	adminDeleteScore,
 	adminDeleteRgScore,
+	adminDeleteTimeScore,
 	adminInsertScore,
 	adminInsertRgScore,
+	adminInsertTimeScore,
 	getAllTimeLeaderboard,
 	getRgAllTimeLeaderboard,
+	getTimeAllTimeLeaderboard,
 } from "./leaderboard";
-import type { Leaderboard, RgLeaderboard } from "@sr-web/protocol";
+import type {
+	Leaderboard,
+	RgLeaderboard,
+	TimeLeaderboard,
+} from "@sr-web/protocol";
 
-type Table = "scores" | "rg_scores";
+type Table = "scores" | "rg_scores" | "time_scores";
 
 function json(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -43,7 +52,7 @@ function rebroadcast(server: SrServer, table: Table): void {
 				entries: lb.map((e) => ({ rank: e.rank, name: e.name, maxSpeed: e.maxSpeed })),
 			} satisfies Leaderboard),
 		);
-	} else {
+	} else if (table === "rg_scores") {
 		const lb = getRgAllTimeLeaderboard(10);
 		server.publish(
 			"leaderboard-rg",
@@ -52,6 +61,21 @@ function rebroadcast(server: SrServer, table: Table): void {
 				date: todayDate(),
 				entries: lb.map((e) => ({ rank: e.rank, name: e.name, maxStreak: e.maxStreak })),
 			} satisfies RgLeaderboard),
+		);
+	} else {
+		const lb = getTimeAllTimeLeaderboard(10);
+		server.publish(
+			"leaderboard-time",
+			JSON.stringify({
+				type: "time_leaderboard",
+				date: todayDate(),
+				entries: lb.map((e) => ({
+					rank: e.rank,
+					name: e.name,
+					durationTicks: e.durationTicks,
+					runId: e.runId,
+				})),
+			} satisfies TimeLeaderboard),
 		);
 	}
 }
@@ -82,15 +106,31 @@ export async function handleAdminRequest(
 		});
 	}
 
-	const m = url.pathname.match(/^\/admin\/api\/(scores|rg_scores)(?:\/(\d+))?$/);
+	const m = url.pathname.match(/^\/admin\/api\/(scores|rg_scores|time_scores)(?:\/(\d+))?$/);
 	if (!m) return new Response("not found", { status: 404 });
 
 	const table = m[1] as Table;
 	const id = m[2] ? Number(m[2]) : null;
 
+	function listFor(t: Table): unknown {
+		if (t === "scores") return adminListScores();
+		if (t === "rg_scores") return adminListRgScores();
+		return adminListTimeScores();
+	}
+	function updateFor(t: Table, rowId: number, body: Record<string, unknown>): boolean {
+		if (t === "scores") return adminUpdateScore(rowId, body);
+		if (t === "rg_scores") return adminUpdateRgScore(rowId, body);
+		return adminUpdateTimeScore(rowId, body);
+	}
+	function deleteFor(t: Table, rowId: number): boolean {
+		if (t === "scores") return adminDeleteScore(rowId);
+		if (t === "rg_scores") return adminDeleteRgScore(rowId);
+		return adminDeleteTimeScore(rowId);
+	}
+
 	try {
 		if (req.method === "GET" && id === null) {
-			return json(table === "scores" ? adminListScores() : adminListRgScores());
+			return json(listFor(table));
 		}
 
 		if (req.method === "POST" && id === null) {
@@ -105,10 +145,16 @@ export async function handleAdminRequest(
 				const newId = adminInsertScore(date, name, speed, ts);
 				rebroadcast(server, table);
 				return json({ id: newId });
-			} else {
+			} else if (table === "rg_scores") {
 				const streak = Number(body.max_streak);
 				if (!Number.isFinite(streak)) return json({ error: "max_streak required" }, 400);
 				const newId = adminInsertRgScore(date, name, streak, ts);
+				rebroadcast(server, table);
+				return json({ id: newId });
+			} else {
+				const ticks = Number(body.duration_ticks);
+				if (!Number.isFinite(ticks)) return json({ error: "duration_ticks required" }, 400);
+				const newId = adminInsertTimeScore(date, name, ticks, ts);
 				rebroadcast(server, table);
 				return json({ id: newId });
 			}
@@ -116,18 +162,14 @@ export async function handleAdminRequest(
 
 		if (req.method === "PATCH" && id !== null) {
 			const body = (await req.json()) as Record<string, unknown>;
-			const ok =
-				table === "scores"
-					? adminUpdateScore(id, body)
-					: adminUpdateRgScore(id, body);
+			const ok = updateFor(table, id, body);
 			if (!ok) return json({ error: "no rows updated" }, 404);
 			rebroadcast(server, table);
 			return json({ ok: true });
 		}
 
 		if (req.method === "DELETE" && id !== null) {
-			const ok =
-				table === "scores" ? adminDeleteScore(id) : adminDeleteRgScore(id);
+			const ok = deleteFor(table, id);
 			if (!ok) return json({ error: "not found" }, 404);
 			rebroadcast(server, table);
 			return json({ ok: true });
@@ -196,6 +238,7 @@ const ADMIN_HTML = `<!doctype html>
 <div class="tabs">
   <button id="tab-scores" class="active">Speed scores</button>
   <button id="tab-rg">RG streaks</button>
+  <button id="tab-time">Time runs</button>
 </div>
 
 <div class="toolbar">
@@ -222,8 +265,9 @@ const ADMIN_HTML = `<!doctype html>
   const cols = {
     scores: ['id', 'date', 'player_name', 'max_speed', 'timestamp'],
     rg_scores: ['id', 'date', 'player_name', 'max_streak', 'timestamp'],
+    time_scores: ['id', 'date', 'player_name', 'duration_ticks', 'timestamp'],
   };
-  const numericCols = new Set(['id', 'max_speed', 'max_streak', 'timestamp']);
+  const numericCols = new Set(['id', 'max_speed', 'max_streak', 'duration_ticks', 'timestamp']);
 
   const statusEl = document.getElementById('status');
   function setStatus(msg, kind) {
@@ -327,7 +371,10 @@ const ADMIN_HTML = `<!doctype html>
   document.getElementById('add').addEventListener('click', async () => {
     const name = prompt('Player name?');
     if (!name) return;
-    const valueLabel = table === 'scores' ? 'max_speed' : 'max_streak';
+    const valueLabel =
+      table === 'scores' ? 'max_speed'
+      : table === 'rg_scores' ? 'max_streak'
+      : 'duration_ticks';
     const valStr = prompt(valueLabel + '?');
     if (valStr === null) return;
     const val = Number(valStr);
@@ -341,18 +388,17 @@ const ADMIN_HTML = `<!doctype html>
     } catch (err) { setStatus(err.message, 'error'); }
   });
 
-  document.getElementById('tab-scores').addEventListener('click', () => {
-    table = 'scores';
-    document.getElementById('tab-scores').classList.add('active');
-    document.getElementById('tab-rg').classList.remove('active');
+  const tabIds = ['tab-scores', 'tab-rg', 'tab-time'];
+  function activate(id, t) {
+    table = t;
+    for (const tid of tabIds) {
+      document.getElementById(tid).classList.toggle('active', tid === id);
+    }
     load();
-  });
-  document.getElementById('tab-rg').addEventListener('click', () => {
-    table = 'rg_scores';
-    document.getElementById('tab-rg').classList.add('active');
-    document.getElementById('tab-scores').classList.remove('active');
-    load();
-  });
+  }
+  document.getElementById('tab-scores').addEventListener('click', () => activate('tab-scores', 'scores'));
+  document.getElementById('tab-rg').addEventListener('click', () => activate('tab-rg', 'rg_scores'));
+  document.getElementById('tab-time').addEventListener('click', () => activate('tab-time', 'time_scores'));
 
   load();
 })();

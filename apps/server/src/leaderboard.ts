@@ -705,6 +705,14 @@ export interface RawRgScore {
 	timestamp: number;
 }
 
+export interface RawTimeScore {
+	id: number;
+	date: string;
+	player_name: string;
+	duration_ticks: number;
+	timestamp: number;
+}
+
 export function adminListScores(): RawScore[] {
 	return db
 		.prepare(
@@ -722,11 +730,21 @@ export function adminListRgScores(): RawRgScore[] {
 		.all() as RawRgScore[];
 }
 
+export function adminListTimeScores(): RawTimeScore[] {
+	ensureTimeTable();
+	return db
+		.prepare(
+			"SELECT id, date, player_name, duration_ticks, timestamp FROM time_scores ORDER BY id DESC",
+		)
+		.all() as RawTimeScore[];
+}
+
 const SCORE_FIELDS = ["date", "player_name", "max_speed", "timestamp"] as const;
 const RG_SCORE_FIELDS = ["date", "player_name", "max_streak", "timestamp"] as const;
+const TIME_SCORE_FIELDS = ["date", "player_name", "duration_ticks", "timestamp"] as const;
 
 function buildUpdate(
-	table: "scores" | "rg_scores",
+	table: "scores" | "rg_scores" | "time_scores",
 	allowed: readonly string[],
 	id: number,
 	fields: Record<string, unknown>,
@@ -754,6 +772,11 @@ export function adminUpdateRgScore(id: number, fields: Record<string, unknown>):
 	return buildUpdate("rg_scores", RG_SCORE_FIELDS, id, fields);
 }
 
+export function adminUpdateTimeScore(id: number, fields: Record<string, unknown>): boolean {
+	ensureTimeTable();
+	return buildUpdate("time_scores", TIME_SCORE_FIELDS, id, fields);
+}
+
 export function adminDeleteScore(id: number): boolean {
 	return db.prepare("DELETE FROM scores WHERE id = ?").run(id).changes > 0;
 }
@@ -761,6 +784,11 @@ export function adminDeleteScore(id: number): boolean {
 export function adminDeleteRgScore(id: number): boolean {
 	ensureRgTable();
 	return db.prepare("DELETE FROM rg_scores WHERE id = ?").run(id).changes > 0;
+}
+
+export function adminDeleteTimeScore(id: number): boolean {
+	ensureTimeTable();
+	return db.prepare("DELETE FROM time_scores WHERE id = ?").run(id).changes > 0;
 }
 
 export function adminInsertScore(
@@ -789,5 +817,20 @@ export function adminInsertRgScore(
 			"INSERT INTO rg_scores (date, player_name, max_streak, timestamp) VALUES (?, ?, ?, ?)",
 		)
 		.run(date, playerName, maxStreak, timestamp);
+	return Number(r.lastInsertRowid);
+}
+
+export function adminInsertTimeScore(
+	date: string,
+	playerName: string,
+	durationTicks: number,
+	timestamp: number,
+): number {
+	ensureTimeTable();
+	const r = db
+		.prepare(
+			"INSERT INTO time_scores (date, player_name, duration_ticks, timestamp) VALUES (?, ?, ?, ?)",
+		)
+		.run(date, playerName, durationTicks, timestamp);
 	return Number(r.lastInsertRowid);
 }
