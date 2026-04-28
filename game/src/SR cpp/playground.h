@@ -82,13 +82,6 @@ struct run_recorder
 	// player issues input. Always false for speed/RG modes — they begin
 	// counting from the moment the recorder arms.
 	bool waiting_for_input = false;
-	// Time-challenge insta-finish guard: true once the player has been
-	// observed left of the goal line during this recording. Replaces the
-	// `has_been_airborne` gate, which incorrectly required the player to
-	// jump at least once before the goal touch could end the run — a flat
-	// corridor lets a runner reach the goal without ever leaving the
-	// ground.
-	bool has_been_left_of_goal = false;
 
 	// Edge detection helper for has_been_airborne.
 	bool was_on_ground_prev = true;

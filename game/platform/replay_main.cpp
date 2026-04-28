@@ -356,12 +356,9 @@ extern "C"
 
 		std::uint8_t current_bitmask = 0;
 
-		// Mirror the in-game heuristic: only count a goal-crossing once
-		// the player has been observed left of the goal during this run.
-		// Without this, a savestate captured already past the goal would
-		// trip the trigger on tick 0.
-		bool has_been_left_of_goal = false;
-
+		// Mirror the in-game heuristic exactly: the run ends the first
+		// tick the right edge crosses the goal line. Recording boundaries
+		// equal the timer boundaries.
 		for (unsigned int t = 0; t < duration_ticks; t++)
 		{
 			while (have_event && event_tick == static_cast<std::uint64_t>(t))
@@ -389,10 +386,7 @@ extern "C"
 			st.update(emu::timespan{ 33333ull });
 
 			const float right_edge = p->m_actor->d.position.x + p->m_actor->d.size.x;
-			if (right_edge < emu::time_challenge::end_x_threshold)
-				has_been_left_of_goal = true;
-			if (has_been_left_of_goal
-				&& right_edge >= emu::time_challenge::end_x_threshold)
+			if (right_edge >= emu::time_challenge::end_x_threshold)
 			{
 				return t + 1; // tick count after this step
 			}
