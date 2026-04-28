@@ -576,7 +576,8 @@ extern "C"
 	unsigned int sr_run_consume_finished(
 		unsigned char* out_buf, unsigned int buf_size,
 		float* out_max_speed,
-		unsigned int* out_duration_ticks)
+		unsigned int* out_duration_ticks,
+		unsigned int* out_last_run_start)
 	{
 		if (g_inst == nullptr) return 0;
 		auto& rec = g_inst->m_playground.m_run_recorder;
@@ -595,6 +596,16 @@ extern "C"
 			*out_duration_ticks = static_cast<unsigned int>(
 				dur > 0xffffffffull ? 0xffffffffull : dur);
 		}
+		if (out_last_run_start != nullptr)
+		{
+			// Relative to start_tick — i.e. the replay-frame tick where
+			// the most recently completed attempt began. 0 when there's
+			// no prior floor touch (the PR run started at level-load).
+			const std::uint64_t skip = (rec.prev_run_end_tick > rec.start_tick)
+				? (rec.prev_run_end_tick - rec.start_tick) : 0;
+			*out_last_run_start = static_cast<unsigned int>(
+				skip > 0xffffffffull ? 0xffffffffull : skip);
+		}
 		// Only clear the finished flag — keep recording so subsequent
 		// floor-touch events can fire it again.
 		rec.finished = false;
@@ -608,7 +619,8 @@ extern "C"
 	unsigned int sr_run_snapshot(
 		unsigned char* out_buf, unsigned int buf_size,
 		float* out_max_speed,
-		unsigned int* out_duration_ticks)
+		unsigned int* out_duration_ticks,
+		unsigned int* out_last_run_start)
 	{
 		if (g_inst == nullptr) return 0;
 		auto& rec = g_inst->m_playground.m_run_recorder;
@@ -630,6 +642,17 @@ extern "C"
 			*out_duration_ticks = static_cast<unsigned int>(
 				dur > 0xffffffffull ? 0xffffffffull : dur);
 		}
+		if (out_last_run_start != nullptr)
+		{
+			// In RG mode the run "ends" on streak break, not floor touch,
+			// so use the most recent floor-touch tick (= end_tick) as the
+			// best approximation of the last attempt's start. Falls back
+			// to 0 (replay from beginning) when none.
+			const std::uint64_t skip = (rec.end_tick > rec.start_tick)
+				? (rec.end_tick - rec.start_tick) : 0;
+			*out_last_run_start = static_cast<unsigned int>(
+				skip > 0xffffffffull ? 0xffffffffull : skip);
+		}
 		return static_cast<unsigned int>(need);
 	}
 
@@ -642,11 +665,11 @@ extern "C"
 	//
 	// mode: 0 = grapple_challenge, 1 = rg_challenge.
 	int sr_replay_start(const unsigned char* log, unsigned int log_len,
-		unsigned int duration_ticks, int mode)
+		unsigned int duration_ticks, int mode, unsigned int skip_ticks)
 	{
 		if (g_inst == nullptr || log == nullptr) return 0;
 		const bool ok = g_inst->m_playground.start_replay(
-			log, log_len, duration_ticks, mode);
+			log, log_len, duration_ticks, mode, skip_ticks);
 		return ok ? 1 : 0;
 	}
 

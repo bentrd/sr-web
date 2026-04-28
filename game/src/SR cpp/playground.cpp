@@ -30,6 +30,7 @@ void run_recorder::clear()
 	first_tick = true;
 	start_tick = 0;
 	end_tick = 0;
+	prev_run_end_tick = 0;
 	max_speed = 0.0f;
 	last_bitmask = 0;
 	last_event_global_tick = 0;
@@ -202,10 +203,11 @@ void playground::update_input(const inputs&)
 }
 
 bool playground::start_replay(const std::uint8_t* log_data, std::size_t len,
-	std::uint64_t duration_ticks_in, int mode)
+	std::uint64_t duration_ticks_in, int mode, std::uint64_t skip_ticks)
 {
 	if (log_data == nullptr || len < 2) return false;
 	if (duration_ticks_in == 0) return false;
+	if (skip_ticks >= duration_ticks_in) return false;
 
 	// Lay down the same starting state the run was recorded against.
 	if (mode == 0)
@@ -234,6 +236,29 @@ bool playground::start_replay(const std::uint8_t* log_data, std::size_t len,
 	m_replay.have_event = m_replay.read_next_event(0);
 	if (!m_replay.have_event) return false;
 	m_replay.is_active = true;
+
+	// Fast-forward: drive the sim deterministically through `skip_ticks`
+	// of replay input before handing control back to the visible loop.
+	// Each iteration mirrors playground::update()'s replay-driven branch
+	// (resolve bitmask, write inputs, m_state.update). Camera/visuals
+	// are skipped — the next live update() will resync them.
+	if (skip_ticks > 0 && m_player != nullptr)
+	{
+		for (std::uint64_t i = 0; i < skip_ticks; ++i)
+		{
+			if (!m_replay.is_active) break;
+			const std::uint8_t bm = m_replay.step();
+			for (size_t a = 0; a < m_state.m_inputs[0].size(); ++a)
+			{
+				m_state.m_inputs[0][a] = ((bm >> a) & 1u) != 0;
+			}
+			m_state.update(33333);
+			if (m_game_mode == emu::GameMode::rg_challenge && m_player != nullptr)
+			{
+				emu::update_rg_state(m_rg_state, *m_player, m_state.m_time);
+			}
+		}
+	}
 	return true;
 }
 
@@ -338,6 +363,10 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 			// Floor touched after being airborne → mark a submission point.
 			// Recording continues; JS will read the log + max_speed via
 			// sr_run_consume_finished and decide whether to submit.
+			// Capture the OLD end_tick before overwriting it — that's the
+			// start of the attempt that just ended (used by replays to
+			// skip earlier attempts in chained sessions).
+			rec.prev_run_end_tick = rec.end_tick;
 			rec.end_tick = rec.global_tick;
 			rec.finished = true;
 			rec.has_been_airborne = false;

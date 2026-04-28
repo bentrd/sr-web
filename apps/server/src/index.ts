@@ -180,6 +180,7 @@ const server = Bun.serve<WsData, never>({
 				playerName: run.playerName,
 				claimedMaxSpeed: run.claimedMaxSpeed,
 				durationTicks: run.durationTicks,
+				lastRunStartTick: run.lastRunStartTick,
 				simVersion: run.simVersion,
 				verified: run.verified,
 				timestamp: run.timestamp,
@@ -205,6 +206,7 @@ const server = Bun.serve<WsData, never>({
 				playerName: run.playerName,
 				claimedMaxStreak: run.claimedMaxStreak,
 				durationTicks: run.durationTicks,
+				lastRunStartTick: run.lastRunStartTick,
 				simVersion: run.simVersion,
 				verified: run.verified,
 				timestamp: run.timestamp,
@@ -614,6 +616,7 @@ const server = Bun.serve<WsData, never>({
 					const m = msg as {
 						claimedMaxSpeed: number;
 						durationTicks: number;
+						lastRunStartTick: number;
 						simVersion: number;
 						inputs: string;
 					};
@@ -641,6 +644,16 @@ const server = Bun.serve<WsData, never>({
 							message: "durationTicks out of range",
 						});
 					}
+					// lastRunStartTick is the replay-frame tick the final attempt
+					// began on. Older clients omit it; treat undefined as 0
+					// (replay from level-load). Must be < durationTicks so the
+					// fast-forward never reads past the log.
+					const lastStart = typeof m.lastRunStartTick === "number"
+						&& Number.isInteger(m.lastRunStartTick)
+						&& m.lastRunStartTick >= 0
+						&& m.lastRunStartTick < m.durationTicks
+						? m.lastRunStartTick
+						: 0;
 					if (typeof m.simVersion !== "number" || !Number.isInteger(m.simVersion) || m.simVersion < 1) {
 						return send(ws, {
 							type: "error",
@@ -688,6 +701,7 @@ const server = Bun.serve<WsData, never>({
 							m.durationTicks,
 							m.simVersion,
 							raw,
+							lastStart,
 						);
 					} catch {
 						// Storage failures shouldn't break the live game — just drop.
@@ -790,6 +804,7 @@ const server = Bun.serve<WsData, never>({
 					const m = msg as {
 						claimedMaxStreak: number;
 						durationTicks: number;
+						lastRunStartTick: number;
 						simVersion: number;
 						inputs: string;
 					};
@@ -817,6 +832,12 @@ const server = Bun.serve<WsData, never>({
 							message: "durationTicks out of range",
 						});
 					}
+					const lastStartRg = typeof m.lastRunStartTick === "number"
+						&& Number.isInteger(m.lastRunStartTick)
+						&& m.lastRunStartTick >= 0
+						&& m.lastRunStartTick < m.durationTicks
+						? m.lastRunStartTick
+						: 0;
 					if (typeof m.simVersion !== "number" || !Number.isInteger(m.simVersion) || m.simVersion < 1) {
 						return send(ws, {
 							type: "error",
@@ -858,6 +879,7 @@ const server = Bun.serve<WsData, never>({
 							m.durationTicks,
 							m.simVersion,
 							raw,
+							lastStartRg,
 						);
 					} catch {
 						return;

@@ -5,7 +5,7 @@
 // change, update both this file AND the C++ sr_get_local_snapshot /
 // sr_push_ghost signatures in the same commit.
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 export type RGB = readonly [r: number, g: number, b: number];
 
@@ -223,6 +223,11 @@ export type SubmitRun = {
 	type: "submit_run";
 	claimedMaxSpeed: number; // wu/s (0 < x < 100000)
 	durationTicks: number;   // sim ticks the run lasted (300 ticks/sec)
+	// Replay-frame tick where the most recently completed attempt
+	// began (0 = level-load). Recording is continuous across attempts in
+	// a session, so when the player chains failures before the PR run,
+	// this anchors the replay so only the final (PR) attempt is shown.
+	lastRunStartTick: number;
 	simVersion: number;      // bumps when physics/input mapping change
 	// Base64-encoded input log:
 	//   [varint tickDelta][uint8 bitmask] [varint tickDelta][uint8 bitmask] ...
@@ -269,6 +274,10 @@ export type SubmitRgRun = {
 	type: "submit_rg_run";
 	claimedMaxStreak: number; // integer (1..99999)
 	durationTicks: number;    // sim ticks since recording started
+	// Replay-frame tick the last attempt began on. RG runs end on streak
+	// break, not floor touch, so this is best-effort (most recent floor
+	// touch). 0 = replay from level-load.
+	lastRunStartTick: number;
 	simVersion: number;
 	inputs: string;           // base64-encoded log (same wire format)
 };

@@ -45,12 +45,25 @@ unsigned int sr_run_finished_log_size();
 
 // Atomically read out the finished run and clear it. Returns the number
 // of bytes copied into out_buf (0 if no run is pending or buf_size is
-// too small). out_max_speed / out_start_tick / out_end_tick are filled
-// when the call succeeds.
+// too small). out_max_speed / out_duration_ticks are filled when the
+// call succeeds. out_last_run_start receives the relative replay-frame
+// tick where the most recently completed attempt began (0 = level-load),
+// so the JS side can fast-forward replays past prior chained attempts.
 unsigned int sr_run_consume_finished(
 	unsigned char* out_buf, unsigned int buf_size,
 	float* out_max_speed,
-	unsigned int* out_duration_ticks);
+	unsigned int* out_duration_ticks,
+	unsigned int* out_last_run_start);
+
+// Like sr_run_consume_finished but without the `finished` gate. Used by
+// the RG challenge mode where the streak-break trigger is detected
+// JS-side rather than C-side. Recorder keeps running; nothing is cleared
+// on read so subsequent calls return larger logs.
+unsigned int sr_run_snapshot(
+	unsigned char* out_buf, unsigned int buf_size,
+	float* out_max_speed,
+	unsigned int* out_duration_ticks,
+	unsigned int* out_last_run_start);
 }
 
 #endif

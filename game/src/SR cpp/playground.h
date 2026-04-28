@@ -63,6 +63,11 @@ struct run_recorder
 	// Recording-scoped state.
 	std::uint64_t start_tick = 0;       // global_tick when recording started
 	std::uint64_t end_tick = 0;         // most recent floor-touch tick
+	// global_tick of the floor touch BEFORE end_tick (i.e. the start of
+	// the most recently completed attempt). 0 when no prior floor touch.
+	// Threaded through to the replay so playback skips earlier attempts
+	// in the same continuous recording and shows only the PR run.
+	std::uint64_t prev_run_end_tick = 0;
 	float max_speed = 0.0f;             // peak |velocity| across recording
 	std::uint8_t last_bitmask = 0;
 	std::uint64_t last_event_global_tick = 0;
@@ -196,9 +201,14 @@ struct playground
 	// Start playing back a recorded run. mode 0 = grapple_challenge,
 	// mode 1 = rg_challenge. Regenerates the corresponding procedural
 	// corridor, resets the player to PlayerStart, and arms the replay
-	// driver. Returns false on malformed log or unsupported mode.
+	// driver. `skip_ticks` synchronously fast-forwards the sim through
+	// that many ticks of replay-driven input before returning, so
+	// chained-attempt sessions can resume at the start of the actual PR
+	// run rather than replaying every prior failure. Returns false on
+	// malformed log, unsupported mode, or `skip_ticks >= duration_ticks`.
 	bool start_replay(const std::uint8_t* log, std::size_t len,
-		std::uint64_t duration_ticks, int mode);
+		std::uint64_t duration_ticks, int mode,
+		std::uint64_t skip_ticks);
 	void stop_replay();
 };
 

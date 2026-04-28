@@ -268,9 +268,15 @@ function ensureRunsTable(): void {
 			sim_version INTEGER NOT NULL,
 			inputs BLOB NOT NULL,
 			verified INTEGER NOT NULL DEFAULT 0,
-			timestamp INTEGER NOT NULL
+			timestamp INTEGER NOT NULL,
+			last_run_start_tick INTEGER NOT NULL DEFAULT 0
 		)
 	`);
+	// Migrate older databases that predate the column.
+	const cols = db.prepare(`PRAGMA table_info(runs)`).all() as { name: string }[];
+	if (!cols.some((c) => c.name === "last_run_start_tick")) {
+		db.run(`ALTER TABLE runs ADD COLUMN last_run_start_tick INTEGER NOT NULL DEFAULT 0`);
+	}
 	db.run(`CREATE INDEX IF NOT EXISTS idx_runs_date_speed ON runs(date, claimed_max_speed DESC)`);
 	db.run(`CREATE INDEX IF NOT EXISTS idx_runs_player ON runs(player_name)`);
 }
@@ -289,9 +295,14 @@ function ensureRgRunsTable(): void {
 			sim_version INTEGER NOT NULL,
 			inputs BLOB NOT NULL,
 			verified INTEGER NOT NULL DEFAULT 0,
-			timestamp INTEGER NOT NULL
+			timestamp INTEGER NOT NULL,
+			last_run_start_tick INTEGER NOT NULL DEFAULT 0
 		)
 	`);
+	const cols = db.prepare(`PRAGMA table_info(rg_runs)`).all() as { name: string }[];
+	if (!cols.some((c) => c.name === "last_run_start_tick")) {
+		db.run(`ALTER TABLE rg_runs ADD COLUMN last_run_start_tick INTEGER NOT NULL DEFAULT 0`);
+	}
 	db.run(`CREATE INDEX IF NOT EXISTS idx_rg_runs_date_streak ON rg_runs(date, claimed_max_streak DESC)`);
 	db.run(`CREATE INDEX IF NOT EXISTS idx_rg_runs_player ON rg_runs(player_name)`);
 }
@@ -303,14 +314,15 @@ export function submitRgRun(
 	durationTicks: number,
 	simVersion: number,
 	inputs: Uint8Array,
+	lastRunStartTick: number,
 ): number {
 	ensureRgRunsTable();
 	const r = db
 		.prepare(
-			`INSERT INTO rg_runs (date, player_name, claimed_max_streak, duration_ticks, sim_version, inputs, timestamp)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+			`INSERT INTO rg_runs (date, player_name, claimed_max_streak, duration_ticks, sim_version, inputs, timestamp, last_run_start_tick)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
 		)
-		.run(date, playerName, claimedMaxStreak, durationTicks, simVersion, inputs, Date.now());
+		.run(date, playerName, claimedMaxStreak, durationTicks, simVersion, inputs, Date.now(), lastRunStartTick);
 	return Number(r.lastInsertRowid);
 }
 
@@ -332,6 +344,7 @@ export interface RunRecord {
 	verified: number;
 	timestamp: number;
 	inputs: Uint8Array;
+	lastRunStartTick: number;
 }
 
 export interface RgRunRecord {
@@ -343,6 +356,7 @@ export interface RgRunRecord {
 	verified: number;
 	timestamp: number;
 	inputs: Uint8Array;
+	lastRunStartTick: number;
 }
 
 export function getRunById(id: number): RunRecord | null {
@@ -350,7 +364,7 @@ export function getRunById(id: number): RunRecord | null {
 	const row = db
 		.prepare(
 			`SELECT id, player_name, claimed_max_speed, duration_ticks, sim_version,
-			        verified, timestamp, inputs
+			        verified, timestamp, inputs, last_run_start_tick
 			 FROM runs WHERE id = ?`,
 		)
 		.get(id) as
@@ -363,6 +377,7 @@ export function getRunById(id: number): RunRecord | null {
 			verified: number;
 			timestamp: number;
 			inputs: Uint8Array;
+			last_run_start_tick: number;
 		}
 		| undefined;
 	if (!row) return null;
@@ -375,6 +390,7 @@ export function getRunById(id: number): RunRecord | null {
 		verified: row.verified,
 		timestamp: row.timestamp,
 		inputs: row.inputs,
+		lastRunStartTick: row.last_run_start_tick,
 	};
 }
 
@@ -383,7 +399,7 @@ export function getRgRunById(id: number): RgRunRecord | null {
 	const row = db
 		.prepare(
 			`SELECT id, player_name, claimed_max_streak, duration_ticks, sim_version,
-			        verified, timestamp, inputs
+			        verified, timestamp, inputs, last_run_start_tick
 			 FROM rg_runs WHERE id = ?`,
 		)
 		.get(id) as
@@ -396,6 +412,7 @@ export function getRgRunById(id: number): RgRunRecord | null {
 			verified: number;
 			timestamp: number;
 			inputs: Uint8Array;
+			last_run_start_tick: number;
 		}
 		| undefined;
 	if (!row) return null;
@@ -408,6 +425,7 @@ export function getRgRunById(id: number): RgRunRecord | null {
 		verified: row.verified,
 		timestamp: row.timestamp,
 		inputs: row.inputs,
+		lastRunStartTick: row.last_run_start_tick,
 	};
 }
 
@@ -430,12 +448,13 @@ export function submitRun(
 	durationTicks: number,
 	simVersion: number,
 	inputs: Uint8Array,
+	lastRunStartTick: number,
 ): number {
 	ensureRunsTable();
 	const r = db
 		.prepare(
-			`INSERT INTO runs (date, player_name, claimed_max_speed, duration_ticks, sim_version, inputs, timestamp)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+			`INSERT INTO runs (date, player_name, claimed_max_speed, duration_ticks, sim_version, inputs, timestamp, last_run_start_tick)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
 		)
 		.run(
 			date,
@@ -445,6 +464,7 @@ export function submitRun(
 			simVersion,
 			inputs,
 			Date.now(),
+			lastRunStartTick,
 		);
 	return Number(r.lastInsertRowid);
 }
