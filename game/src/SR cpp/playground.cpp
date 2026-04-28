@@ -11,6 +11,7 @@
 #include "emulation/rg_detector.h"
 #include "drawing/draw_util.h"
 #include "drawing/trail.h"
+#include "drawing/visuals_config.h"
 
 std::array<int, emu::input_count> input_map
 {
@@ -597,6 +598,16 @@ void playground::draw(const inputs&)
 {
 	if (m_local_identity.is_set)
 		draw::set_local_player_color(m_local_identity.r, m_local_identity.g, m_local_identity.b);
+
+	// Optional motion-reference grid behind the world. RG-only because the
+	// procedurally-generated corridor is the only mode where the lack of
+	// landmarks makes vertical/horizontal motion hard to read at speed.
+	// Bounds match load_rg_challenge's generate_corridor(... ceil_y=2,
+	// floor_y=23 ...): corridor interior runs from y=(ceil_y+1)*16 = 48
+	// (top of inside) to y=floor_y*16 = 368 (bottom of inside). Lines
+	// sitting on the wall edges read as major.
+	if (m_game_mode == emu::GameMode::rg_challenge && draw::visuals().show_rg_grid)
+		draw::draw_rg_grid(m_camera, 48.0f, 368.0f);
 
 	// World pass: tiles + non-player actors (grapple ropes, boost
 	// volumes, obstacles). Flush before drawing the trail so the trail's

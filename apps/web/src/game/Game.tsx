@@ -121,6 +121,7 @@ interface CAbi {
 	setVisualBoostSection: (r: number, g: number, b: number, a: number) => void;
 	setVisualBoostPickup: (r: number, g: number, b: number, a: number) => void;
 	setVisualShowBoostBar: (show: boolean) => void;
+	setVisualRgGrid: (show: boolean) => void;
 	saveState: () => void;
 	loadState: () => boolean;
 	// Anti-cheat run recorder. consumeFinishedRun returns null when no run
@@ -192,6 +193,7 @@ function bindCAbi(mod: SrModule): CAbi {
 	const f_v_boost_section = mod.cwrap("sr_set_visual_boost_section", null, ["number", "number", "number", "number"]);
 	const f_v_boost_pickup = mod.cwrap("sr_set_visual_boost_pickup", null, ["number", "number", "number", "number"]);
 	const f_v_show_boost_bar = mod.cwrap("sr_set_visual_show_boost_bar", null, ["number"]);
+	const f_v_rg_grid = mod.cwrap("sr_set_visual_rg_grid", null, ["number"]);
 	const f_save_state = mod.cwrap("sr_save_state", null, []);
 	const f_load_state = mod.cwrap("sr_load_state", "number", []);
 	const f_run_sim_ver = mod.cwrap("sr_run_sim_version", "number", []);
@@ -305,6 +307,7 @@ function bindCAbi(mod: SrModule): CAbi {
 		setVisualBoostSection: (r, g, b, a) => { f_v_boost_section(r, g, b, a); },
 		setVisualBoostPickup: (r, g, b, a) => { f_v_boost_pickup(r, g, b, a); },
 		setVisualShowBoostBar: (show) => { f_v_show_boost_bar(show ? 1 : 0); },
+		setVisualRgGrid: (show) => { f_v_rg_grid(show ? 1 : 0); },
 		saveState: () => { f_save_state(); },
 		loadState: () => (f_load_state() as number) !== 0,
 		runSimVersion: () => f_run_sim_ver() as number,
@@ -503,6 +506,7 @@ export function Game(): JSX.Element {
 		abi.setVisualGrappleHeadSize(visuals.grappleHeadSize);
 		abi.setVisualBoostSection(visuals.boostSection[0], visuals.boostSection[1], visuals.boostSection[2], visuals.boostSection[3]);
 		abi.setVisualBoostPickup(visuals.boostPickup[0], visuals.boostPickup[1], visuals.boostPickup[2], visuals.boostPickup[3]);
+		abi.setVisualRgGrid(visuals.showRgGrid);
 	}, [visuals, status]);
 
 	// Reset / quicksave / quickload are UI-only keys handled in JS rather

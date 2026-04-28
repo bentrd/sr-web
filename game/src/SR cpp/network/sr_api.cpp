@@ -440,6 +440,14 @@ extern "C"
 		draw::visuals().show_boost_bar = (show != 0);
 	}
 
+	// Toggle the subtle 16 wu reference grid in rg_challenge mode.
+	// Off by default; the corridor renders identically to before unless
+	// the player flips this on in the options modal.
+	void sr_set_visual_rg_grid(int show)
+	{
+		draw::visuals().show_rg_grid = (show != 0);
+	}
+
 	// Quick-save the local player's pose so the JS side can later
 	// quick-load it. Captures position + velocity + boost charge — enough
 	// for speedrun practice without smashing other simulation state.

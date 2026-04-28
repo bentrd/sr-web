@@ -73,6 +73,14 @@ namespace draw
 	void draw_right_pot_map(const util::level_prep& prep, const camera& camera);
 	void draw_left_pot_map(const util::level_prep& prep, const camera& camera);
 
+	// Subtle world-aligned grid at 16 wu spacing, used as an optional
+	// motion reference in the RG challenge corridor. Clipped to the
+	// world-space y range [min_world_y, max_world_y] so the grid only
+	// appears between the corridor's ceiling and floor tiles. Caller
+	// decides when to invoke (typically before draw_state_world so it
+	// sits behind tiles).
+	void draw_rg_grid(const camera& camera, float min_world_y, float max_world_y);
+
 	// Render a single remote-player snapshot at half-alpha. Phase 4d.
 	void draw_ghost(const net::ghost_state& ghost, const camera& camera);
 }

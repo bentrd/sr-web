@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -609,6 +610,66 @@ void draw::draw_state(state* state, const camera& camera)
 {
 	draw_state_world(state, camera);
 	draw_state_players(state, camera);
+}
+
+void draw::draw_rg_grid(const camera& camera, float min_world_y, float max_world_y)
+{
+	// One grid cell == one game tile (16 wu). Major lines every 4 tiles
+	// (64 wu) read as a coarser anchor; minor lines fill in the rest.
+	// Both axes are world-aligned so the cell boundaries land exactly
+	// on tile edges. Major-line phase is anchored to the corridor's
+	// inner top so the line sitting against the ceiling AND the line
+	// sitting against the floor both read as major (corridor height
+	// is 20 tiles = 5×4 by construction in load_rg_challenge).
+	constexpr float k_minor = 16.0f;
+	constexpr int k_major_every = 4;
+	constexpr float k_alpha_minor = 0.06f;
+	constexpr float k_alpha_major = 0.14f;
+	constexpr float k_r = 0.85f, k_g = 0.85f, k_b = 0.90f;
+
+	const float vw = camera.viewport_size.x;
+	const float vh = camera.viewport_size.y;
+	const float left = camera.position.x;
+	const float top = camera.position.y;
+
+	// Clip the corridor band against the viewport in world space, then
+	// project to screen space. If the visible band is empty we draw
+	// nothing — including the vertical lines, since they should only
+	// span the corridor interior.
+	const float band_min = std::max(min_world_y, top);
+	const float band_max = std::min(max_world_y, top + vh);
+	if (!(band_max > band_min)) return;
+
+	const float screen_band_min = band_min - top;
+	const float screen_band_max = band_max - top;
+
+	// Tile-row index of the corridor's top wall edge — anchors the
+	// major-line phase so that line is major. Walls are tile-aligned by
+	// construction, so this maps to an integer.
+	const int top_row = static_cast<int>(std::lround(min_world_y / k_minor));
+
+	const int x_first = static_cast<int>(std::floor(left / k_minor));
+	const int x_last = static_cast<int>(std::floor((left + vw) / k_minor));
+	for (int i = x_first; i <= x_last; i++)
+	{
+		const float screen_x = static_cast<float>(i) * k_minor - left;
+		const float a = (((i - top_row) % k_major_every) == 0) ? k_alpha_major : k_alpha_minor;
+		draw_line_a(k_r, k_g, k_b, a,
+			vector{ screen_x, screen_band_min },
+			vector{ screen_x, screen_band_max });
+	}
+
+	const int y_first = static_cast<int>(std::ceil(min_world_y / k_minor));
+	const int y_last = static_cast<int>(std::floor(max_world_y / k_minor));
+	for (int j = y_first; j <= y_last; j++)
+	{
+		const float world_y = static_cast<float>(j) * k_minor;
+		if (world_y < band_min || world_y > band_max) continue;
+		const float screen_y = world_y - top;
+		const float a = (((j - top_row) % k_major_every) == 0) ? k_alpha_major : k_alpha_minor;
+		draw_line_a(k_r, k_g, k_b, a,
+			vector{ 0.0f, screen_y }, vector{ vw, screen_y });
+	}
 }
 
 void draw::draw_right_pot_map(const util::level_prep& prep, const camera& camera)

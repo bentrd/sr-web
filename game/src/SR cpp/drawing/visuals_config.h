@@ -42,6 +42,12 @@ namespace draw
 		// modes (the HUD shows session-best instead and the bar overlaps
 		// the leaderboard). Defaults to true to keep regular play unchanged.
 		bool show_boost_bar = true;
+
+		// Subtle 16 wu grid drawn behind the world in rg_challenge mode,
+		// clipped to the corridor interior. On by default — the corridor
+		// is otherwise featureless and reading vertical motion at speed
+		// is hard without a reference.
+		bool show_rg_grid = true;
 	};
 
 	// Single mutable instance owned by the renderer. Returned by reference

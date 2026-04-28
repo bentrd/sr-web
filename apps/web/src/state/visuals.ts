@@ -24,6 +24,9 @@ export interface Visuals {
 	// match the half-opacity ghost rectangle). When false, suppress
 	// every ghost track — local player trail is unaffected.
 	showGhostTrails: boolean;
+	// Subtle 16 wu grid behind the world in rg_challenge mode.
+	// Off by default — the corridor is intentionally featureless.
+	showRgGrid: boolean;
 }
 
 export const VISUAL_DEFAULTS: Visuals = {
@@ -38,6 +41,7 @@ export const VISUAL_DEFAULTS: Visuals = {
 	boostPickup: [0, 1, 0, 0.1],
 	speedometer: "on",
 	showGhostTrails: true,
+	showRgGrid: true,
 };
 
 export const HEAD_SIZE_MIN = 1;
@@ -89,6 +93,7 @@ export function loadVisuals(): Visuals {
 			boostPickup: isColorA(parsed.boostPickup) ? parsed.boostPickup : VISUAL_DEFAULTS.boostPickup,
 			speedometer: isSpeedometerMode(parsed.speedometer) ? parsed.speedometer : VISUAL_DEFAULTS.speedometer,
 			showGhostTrails: typeof parsed.showGhostTrails === "boolean" ? parsed.showGhostTrails : VISUAL_DEFAULTS.showGhostTrails,
+			showRgGrid: typeof parsed.showRgGrid === "boolean" ? parsed.showRgGrid : VISUAL_DEFAULTS.showRgGrid,
 		};
 	} catch {
 		return VISUAL_DEFAULTS;

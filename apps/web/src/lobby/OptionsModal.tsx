@@ -192,6 +192,39 @@ export function OptionsModal({ open, onClose }: OptionsModalProps): JSX.Element 
 					</div>
 				</div>
 
+				<div className="visual-section">
+					<div className="visual-row-label">
+						<div>RG corridor grid</div>
+						<div className="visual-hint">Subtle 16 wu reference grid in the RG challenge corridor</div>
+					</div>
+					<div role="radiogroup" aria-label="RG corridor grid" className="seg-toggle">
+						<button
+							type="button"
+							role="radio"
+							aria-checked={!visuals.showRgGrid}
+							onClick={() => setVisuals({ ...visuals, showRgGrid: false })}
+							className={`seg-toggle-btn ${
+								!visuals.showRgGrid ? "seg-toggle-active" : ""
+							}`}
+							title="Hide grid (default)"
+						>
+							Off
+						</button>
+						<button
+							type="button"
+							role="radio"
+							aria-checked={visuals.showRgGrid}
+							onClick={() => setVisuals({ ...visuals, showRgGrid: true })}
+							className={`seg-toggle-btn ${
+								visuals.showRgGrid ? "seg-toggle-active" : ""
+							}`}
+							title="Show subtle 16 wu grid behind the corridor"
+						>
+							On
+						</button>
+					</div>
+				</div>
+
 				<div className="fps-row">
 					<label className="bindings-label" htmlFor="head-size-slider">
 						Grapple head size
