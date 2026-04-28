@@ -376,6 +376,7 @@ bool playground::arm_recorder()
 	// Time challenge defers the first tick until the player issues input.
 	// Speed/RG modes start counting immediately (matches prior behavior).
 	rec.waiting_for_input = (m_game_mode == emu::GameMode::time_challenge);
+	rec.has_been_left_of_goal = false;
 	return true;
 }
 
@@ -587,15 +588,19 @@ void playground::update(emu::timespan delta, const inputs& inputs, emu::vector v
 		else // time_challenge
 		{
 			// Time run-end: player's right edge crossed the goal line.
-			// has_been_airborne gates the spawn / restored-mid-air state
-			// the same way the speed/RG triggers do — a savestate captured
-			// while the player was already at the goal mustn't insta-finish
-			// the next run on tick 0. At fresh load the player spawns at
-			// column 1 (far left) so this gate has no observable cost
-			// during normal play.
+			// has_been_left_of_goal gates the case where the recorder is
+			// armed with the player already at the goal — without it,
+			// the run would insta-finish on tick 0. Using "airborne"
+			// would force the runner to jump at least once even though
+			// the corridor is flat enough to sprint end-to-end on the
+			// ground.
 			const float right_edge =
 				m_player->m_actor->d.position.x + m_player->m_actor->d.size.x;
-			if (rec.has_been_airborne
+			if (right_edge < emu::time_challenge::end_x_threshold)
+			{
+				rec.has_been_left_of_goal = true;
+			}
+			if (rec.has_been_left_of_goal
 				&& right_edge >= emu::time_challenge::end_x_threshold)
 			{
 				rec.end_tick = rec.global_tick;

@@ -357,11 +357,10 @@ extern "C"
 		std::uint8_t current_bitmask = 0;
 
 		// Mirror the in-game heuristic: only count a goal-crossing once
-		// the player has been airborne after first touching ground.
+		// the player has been observed left of the goal during this run.
 		// Without this, a savestate captured already past the goal would
 		// trip the trigger on tick 0.
-		bool has_been_grounded = p->d.is_on_ground;
-		bool has_been_airborne = false;
+		bool has_been_left_of_goal = false;
 
 		for (unsigned int t = 0; t < duration_ticks; t++)
 		{
@@ -389,12 +388,10 @@ extern "C"
 
 			st.update(emu::timespan{ 33333ull });
 
-			const bool is_on_ground = p->d.is_on_ground;
-			if (is_on_ground) has_been_grounded = true;
-			if (has_been_grounded && !is_on_ground) has_been_airborne = true;
-
 			const float right_edge = p->m_actor->d.position.x + p->m_actor->d.size.x;
-			if (has_been_airborne
+			if (right_edge < emu::time_challenge::end_x_threshold)
+				has_been_left_of_goal = true;
+			if (has_been_left_of_goal
 				&& right_edge >= emu::time_challenge::end_x_threshold)
 			{
 				return t + 1; // tick count after this step
